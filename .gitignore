@@ -6,3 +6,8 @@ node_modules/
 .DS_Store
 coverage/
 *.log
+.cron_secret_tmp
+scraper-*.json
+scraper-*.txt
+price*.json
+stations.json

@@ -1,7 +1,474 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="manifest" href="/manifest.webmanifest"><meta name="apple-mobile-web-app-title" content="Supercharger Saver"><meta name="theme-color" content="#f6f7f2"><meta name="description" content="Find nearby Tesla Superchargers and compare current reported rates with the lowest published charging windows."><title>Supercharger Saver · A better time to charge</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23233732'/%3E%3Cpath d='M23 5L10 23h10l-3 13 14-20H20z' fill='%23d5ef86'/%3E%3C/svg%3E"><style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
-:root{--bg:#f6f7f2;--ink:#243b34;--muted:#6d7a73;--line:#dfe5dc;--lime:#d4ec94;--green:#294d3f}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:'DM Sans',system-ui,sans-serif;font-size:14px}button,input,select{font:inherit}button,a,input,select{-webkit-tap-highlight-color:transparent}button,a{touch-action:manipulation}button{cursor:pointer}button:disabled{opacity:.5;cursor:wait}a{color:inherit}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #83a843;outline-offset:3px}header{height:88px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;max-width:1440px;margin:auto;padding:0 48px}.logo span{line-height:1.05;letter-spacing:-.5px}.logo{font:800 20px Manrope,system-ui;letter-spacing:-1px;display:flex;gap:10px;align-items:center;text-decoration:none}.logo i{display:grid;place-items:center;background:var(--ink);color:var(--lime);border-radius:11px;width:36px;height:38px;font-style:normal;font-size:28px}.nav{display:flex;align-items:center;gap:28px}.nav button{background:none;border:0;color:var(--muted)}.pill{font-size:11px;letter-spacing:1px;text-transform:uppercase;border:1px solid #cbd7c6;border-radius:30px;padding:8px 12px;white-space:nowrap}main{max-width:1440px;margin:auto;padding:48px}.hero{display:flex;justify-content:space-between;gap:40px;align-items:center;margin-bottom:34px}.eyebrow{font-size:11px;letter-spacing:2px;font-weight:700;color:#6a8066;display:flex;gap:9px;align-items:center}.dot{width:6px;height:6px;border-radius:50%;background:#779b54;display:inline-block}h1{font:600 clamp(35px,4.5vw,59px)/1.08 Manrope,system-ui;letter-spacing:-2.8px;margin:17px 0}h1 span{color:#789464}.hero p{color:var(--muted);font-size:15px;line-height:1.7;max-width:450px}.hero-art{position:relative;background:#e7eddf;border:1px solid #dce4d4;border-radius:25px;width:340px;height:177px;padding:24px;overflow:hidden}.hero-art small{font-size:10px;letter-spacing:2px}.art-bars{display:flex;align-items:end;gap:9px;height:76px;margin-top:15px}.art-bars i{background:#becdb1;width:22px;border-radius:5px 5px 0 0}.art-bars i:nth-last-child(-n+3){background:#335844}.art-label{position:absolute;right:22px;top:28px;background:#fff;padding:7px 10px;border-radius:8px;font-size:11px}.art-footer{margin-top:10px;font-size:10px;color:#67765d;display:flex;justify-content:space-between}.searchbox{background:white;border:1px solid var(--line);border-radius:17px;padding:10px;display:flex;gap:9px;align-items:center;box-shadow:0 4px 16px #243b3404}.location-input{flex:1;display:flex;gap:12px;align-items:center;padding-left:13px;min-width:0}.location-input input{border:0;outline:none;width:100%;font-size:16px;color:var(--ink);padding:13px 0;background:transparent}.primary{background:var(--ink);color:#fff;border:0;border-radius:10px;padding:14px 20px;font-weight:600}.secondary{background:#eef2e9;border:1px solid #dee5d5;border-radius:10px;padding:13px 17px;color:var(--ink)}.searchbox select{padding:12px;border:0;border-left:1px solid var(--line);background:white;color:var(--ink)}#suggestions{display:grid;background:white;border-radius:12px;overflow:hidden}#suggestions button{border:0;border-bottom:1px solid var(--line);background:white;text-align:left;padding:16px}.controls{display:flex;justify-content:space-between;align-items:center;margin:26px 0 20px;gap:14px;flex-wrap:wrap}.tabs{background:#e9ede4;padding:5px;display:flex;border-radius:12px;gap:3px}.tabs button{border:0;background:transparent;color:#6b7768;padding:10px 18px;border-radius:8px;font-size:13px}.tabs button.active{background:white;color:var(--ink);box-shadow:0 2px 5px #243b340b;font-weight:700}.filters{display:flex;gap:14px;align-items:center}.filters select{background:transparent;border:0;color:var(--ink);padding:8px 0}.notice{display:flex;gap:12px;align-items:center;border:1px solid #dce3d1;background:#eef2e6;padding:14px 17px;border-radius:12px;font-size:12px;line-height:1.6;margin-bottom:22px}.notice strong{font-weight:700}.notice button{margin-left:auto;white-space:nowrap;background:none;border:0;text-decoration:underline;color:var(--green)}.layout{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(300px,1fr);gap:26px}.result-header{display:flex;align-items:center;justify-content:space-between;margin:0 0 15px}h2{font:700 19px Manrope;margin:0}.small{font-size:12px;color:var(--muted)}.cards{display:grid;gap:12px}.card{background:white;border:1px solid var(--line);border-radius:15px;padding:21px;transition:border-color .2s,transform .2s}.card:hover{border-color:#9eae93}.card.best{border-color:#a0bc77}.cardtop{display:flex;gap:13px;align-items:start}.charger{width:37px;height:43px;border:2px solid #d4dcd4;border-radius:10px;display:grid;place-items:center;color:#d95448;font-size:24px;flex-shrink:0}.cardtitle{flex:1;min-width:0}.card h3{font-size:15px;margin:0 0 6px;font-weight:700}.rate{text-align:right;white-space:nowrap}.rate strong{display:block;font-size:25px;font-weight:600;letter-spacing:-.8px}.rate span{font-size:10px;color:var(--muted)}.meta{color:var(--muted);font-size:11px;line-height:1.7}.cardbottom{margin-top:17px;padding-top:14px;border-top:1px solid #edf0ea;display:flex;justify-content:space-between;gap:10px;align-items:center}.window{font-size:12px}.window b{font-weight:600}.detail-btn{background:none;border:0;color:var(--green);font-size:12px;font-weight:700;padding:8px 0 8px 8px}.badge{display:inline-block;font-size:9px;letter-spacing:.7px;background:#eaf2dc;border-radius:4px;padding:4px 7px;margin-bottom:9px;color:#4d6d39;text-transform:uppercase}.tag{color:#8d7952}.aside{position:sticky;top:20px;align-self:start}.mapwrap{height:355px;border:1px solid var(--line);border-radius:17px;overflow:hidden;background:#e8ede2;position:relative}#map{height:100%;z-index:1}.map-label{position:absolute;top:14px;left:14px;z-index:500;background:white;padding:9px 12px;border-radius:7px;box-shadow:0 2px 8px #0001;font-size:11px;pointer-events:none}.map-fallback{padding:80px 30px;line-height:1.8;text-align:center;color:var(--muted)}.marker{border:1px solid #cbd8c3;background:white;border-radius:7px;padding:5px 9px;font:700 12px 'DM Sans',sans-serif;box-shadow:0 2px 6px #0002;white-space:nowrap;width:max-content!important;height:auto!important}.map-you{background:#466cbe;border:3px solid white;border-radius:50%;box-shadow:0 0 0 6px #466cbe22}.insight{background:#243d33;border-radius:17px;padding:25px;color:#fff;margin-top:17px;position:relative;overflow:hidden}.insight .eyebrow{color:#c4df97}.insight h3{font:500 23px/1.35 Manrope;margin:15px 0 10px;letter-spacing:-.6px}.insight p{font-size:12px;color:#bdcec2;line-height:1.8;margin:0}.insight button{border:1px solid #5b7665;background:transparent;color:#e0f1c7;border-radius:8px;padding:10px 14px;margin-top:18px}.energy{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #496254;margin-top:21px;padding-top:17px;font-size:12px}.energy input{width:65px;background:#3a5145;border:1px solid #5b7665;border-radius:6px;color:white;padding:7px}.footnote{font-size:11px;line-height:1.8;color:var(--muted);padding:17px 4px}.empty{padding:45px 25px;text-align:center;border:1px dashed #c8d3be;border-radius:14px;color:var(--muted);line-height:1.8}.empty h3{color:var(--ink)}footer{margin-top:50px;padding-top:20px;border-top:1px solid var(--line);display:flex;gap:18px;justify-content:space-between;font-size:11px;color:var(--muted)}footer button{border:0;background:none;color:inherit;text-decoration:underline}dialog{border:1px solid var(--line);border-radius:22px;padding:28px;width:min(620px,calc(100vw - 28px));max-height:90dvh;color:var(--ink);background:#fafbf7;box-shadow:0 30px 100px #0003}dialog::backdrop{background:#152a2266;backdrop-filter:blur(3px)}.modalhead{display:flex;align-items:start;justify-content:space-between;gap:15px}.close{border:0;border-radius:50%;background:#e8ede2;width:34px;height:34px;font-size:22px;flex-shrink:0}.modaltext{font-size:13px;line-height:1.8;color:var(--muted)}.modaltext a{color:var(--green)}.modal-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.modal-actions a{text-decoration:none}.timeline{display:flex;gap:3px;align-items:end;height:90px;margin-top:20px}.timeline div{flex:1;background:#afc49c;border-radius:3px 3px 0 0;min-width:1px}.timeline div.low{background:#375e43}.timeline-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:10px;margin-top:6px}table{border-collapse:collapse;width:100%;font-size:12px;margin-top:17px}td,th{padding:10px 0;border-bottom:1px solid var(--line);text-align:left}th{color:var(--muted);font-weight:500}.editor{margin-top:20px;background:#eef2e8;padding:17px;border-radius:12px}.editor label{font-size:11px;color:var(--muted);display:block;margin:12px 0 6px}.editor input,.editor select{padding:9px;border:1px solid #ccd6c3;border-radius:6px;background:white;color:var(--ink);max-width:100%;min-width:0}.row{display:grid;grid-template-columns:1fr 1fr 1fr 28px;gap:6px;margin-bottom:8px}.row button{border:0;background:none;color:var(--muted)}.error{color:#ad4938;font-size:12px}.success{color:#3b7542;font-size:12px}#status{font-size:12px;padding:8px 3px;color:var(--muted);min-height:30px}.mobile-map{display:none}.loading{opacity:.55;pointer-events:none}#more{width:100%;margin-top:16px}button[hidden],[hidden]{display:none!important}
-@media(min-width:1500px){main{padding-top:55px}}@media(max-width:900px){header{padding:0 24px}main{padding:30px 24px}.hero-art{width:260px}.layout{grid-template-columns:1.1fr 1fr;gap:18px}.filters{gap:10px}.tabs button{padding:10px 13px}.card{padding:17px}.rate strong{font-size:22px}}
-@media(max-width:680px){header{height:72px;padding:0 20px}.logo{font-size:19px}.nav{gap:12px}.nav .pill{display:none}main{padding:28px 18px}.hero{margin-bottom:23px}.hero-art{display:none}h1{font-size:43px;letter-spacing:-2px;margin:16px 0}.hero p{font-size:14px;margin:14px 0 0;max-width:330px}.searchbox{flex-wrap:wrap;gap:6px;padding:8px}.location-input{flex-basis:70%;padding-left:7px}.location-input input{font-size:16px}.searchbox select{flex:1;border:0;background:#f2f5ec;border-radius:8px;min-height:44px}.searchbox .secondary{flex:1;padding:12px 8px;white-space:nowrap}.searchbox .primary{padding:13px}.controls{gap:13px;margin-top:18px}.tabs{width:100%;display:grid;grid-template-columns:1fr 1fr}.tabs button{min-height:44px}.tabs button{flex:1;padding:11px 8px;font-size:12px}.filters{width:100%;justify-content:space-between;font-size:12px}.notice{align-items:start;padding:13px;font-size:11px;gap:7px}.notice button{white-space:normal;min-width:65px;padding:0}.layout{grid-template-columns:1fr}.aside{position:static;grid-row:1}.mapwrap{height:245px;display:none}.mapwrap.show{display:block;margin-bottom:18px}.insight{display:none}.aside .footnote{display:none}.mobile-map{display:block;background:none;border:0;color:var(--green);font-size:12px}.result-header{flex-wrap:wrap;gap:10px}.card{padding:18px}.card h3{font-size:14px}.rate strong{font-size:22px}.cardbottom{gap:5px}.window{font-size:11px}.meta{font-size:10px}footer{margin-top:30px;flex-wrap:wrap;line-height:1.8}dialog{padding:21px}.row{grid-template-columns:1fr 1fr .9fr 24px}.editor{padding:12px}}
-@media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
-</style></head><body><header><a class="logo" href="/" aria-label="Supercharger Saver home"><i>ϟ</i><span>Supercharger<br>Saver</span></a><nav class="nav"><button id="about">How it works →</button><span class="pill">Built for the better stop</span></nav></header><main><section class="hero"><div><div class="eyebrow"><span class="dot"></span> GOOD TIMING. BETTER CHARGING.</div><h1>Less searching.<br><span>More saving.</span></h1><p>Your next Supercharger, at a better time.<br>Compare nearby stops and find the lowest price window.</p></div><div class="hero-art" aria-hidden="true"><small>THE POWER OF TIMING</small><span class="art-label">A little later. A little less.</span><div class="art-bars"><i style="height:40%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:88%"></i><i style="height:100%"></i><i style="height:82%"></i><i style="height:52%"></i><i style="height:31%"></i><i style="height:27%"></i></div><div class="art-footer"><span>DAY</span><span>ILLUSTRATION · NOT LIVE RATES</span><span>NIGHT</span></div></div></section><form id="search" class="searchbox"><div class="location-input"><span aria-hidden="true">⌕</span><input id="location" aria-label="City, ZIP code or address" value="Irving, TX" placeholder="City, ZIP code or address" autocomplete="off" required maxlength="200"></div><button class="primary" id="searchBtn">Search</button><button type="button" class="secondary" id="locate">◎ Use my location</button><select id="radius" aria-label="Search radius"><option value="10">Within 10 mi</option><option value="25" selected>Within 25 mi</option><option value="50">Within 50 mi</option><option value="100">Within 100 mi</option></select></form><div id="suggestions"></div><div id="status" role="status" aria-live="polite">Starting with Irving, Texas. Use your location or search anywhere.</div><p id="syncStatus" class="small" role="status">Checking daily sync status…</p><div class="controls"><div class="tabs" role="group" aria-label="Sort chargers"><button data-sort="now" class="active" aria-pressed="true">Cheapest now</button><button data-sort="later" aria-pressed="false">Lowest in 24h</button><button data-sort="earliest" aria-pressed="false">Earliest &amp; cheapest nearby</button><button data-sort="distance" aria-pressed="false">Nearest</button></div><div class="filters"><select id="rateType" aria-label="Pricing category"><option value="member">Tesla vehicle rate</option><option value="public">Non-member rate</option></select><select id="power" aria-label="Minimum power"><option value="0">Any speed</option><option value="150">150+ kW</option><option value="250">250+ kW</option></select><button class="mobile-map" id="mapToggle">Show map</button></div></div><p id="sortHelp" class="small" hidden>Earliest start of each station’s lowest daily rate → lower price → shorter distance. “Go now” means that rate is available now; travel time is not included.</p><div class="notice"><span aria-hidden="true">ⓘ</span><div id="notice">Loading station coverage…</div></div><div class="layout"><section><div class="result-header"><h2 id="heading">Nearby Superchargers</h2><span class="small" id="count">Finding stops…</span></div><div id="cards" class="cards"></div><button id="more" class="secondary" hidden>Show more stations</button></section><aside class="aside"><div class="mapwrap"><div id="map"><div class="map-fallback">Loading your neighborhood map…</div></div><div class="map-label">◎ Nearby Superchargers</div></div><div class="insight"><div class="eyebrow">◷ THE CHARGE WINDOW</div><h3 id="insightTitle">The right stop.<br>The right time.</h3><p id="insightText">Compare the price now with the lowest published rate over the next 24 hours. No opening every pin, one at a time.</p><button id="explain">Understand the prices →</button><div class="energy"><label for="energy">Your estimated charge</label><span><input id="energy" type="number" min="1" max="200" value="40" aria-label="Estimated energy in kWh"> kWh</span></div></div><div class="footnote">Distances are straight-line estimates, not driving distance. Stall counts are installed capacity, not live availability. Check access and pricing before you drive.</div></aside></div><footer><span>Supercharger Saver · An independent tool. Not affiliated with Tesla.</span><span><a href="https://www.tesla.com/findus" target="_blank" rel="noopener">Station &amp; price data: Tesla</a> · <button id="dataInfo">Data & privacy</button></span></footer></main><dialog id="modal"><div class="modalhead"><h2 id="modalTitle"></h2><button class="close" aria-label="Close dialog">×</button></div><div id="modalBody"></div></dialog><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script type="module" src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="Supercharger Saver">
+<meta name="theme-color" content="#fdfdfd">
+<meta name="description" content="Find nearby Tesla Superchargers and compare current reported rates with the lowest published charging windows.">
+<title>Supercharger Saver · A better time to charge</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#fdfdfd;
+  --ink:#0a0a0a;
+  --mint:#51f0a8;
+  --muted:#525252;
+  --line:#eceff3;
+  --card:#ffffff;
+  --soft:#f5f5f5;
+  --mint-soft:#f0fff8;
+  --radius:1.25rem;
+  --shadow:0 1px 0 rgba(10,10,10,.04),0 18px 40px rgba(10,10,10,.05);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;
+  color:var(--ink);
+  font:400 14px/1.5 'Plus Jakarta Sans',system-ui,sans-serif;
+  background:
+    radial-gradient(900px 420px at 12% -10%, rgba(81,240,168,.18), transparent 55%),
+    radial-gradient(700px 380px at 92% 8%, rgba(81,240,168,.10), transparent 50%),
+    linear-gradient(180deg,#f7fffb 0%, var(--bg) 28%, #fafafa 100%);
+  min-height:100vh;
+}
+body::before{
+  content:"";
+  position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(10,10,10,.035) 1px, transparent 1px),linear-gradient(90deg, rgba(10,10,10,.035) 1px, transparent 1px);
+  background-size:56px 56px;
+  mask-image:linear-gradient(180deg,#000 0%, transparent 72%);
+  opacity:.5;
+}
+header,main,footer{position:relative;z-index:1}
+button,input,select{font:inherit}
+button,a,input,select{-webkit-tap-highlight-color:transparent}
+button,a{touch-action:manipulation}
+button{cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+a{color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
+
+header{
+  height:76px;display:flex;align-items:center;justify-content:space-between;
+  max-width:1280px;margin:auto;padding:0 32px;
+  border-bottom:1px solid rgba(10,10,10,.06);
+  backdrop-filter:blur(10px);
+  background:rgba(253,253,253,.72);
+  animation:rise .7s ease both;
+}
+.logo{
+  display:flex;gap:12px;align-items:center;text-decoration:none;
+  font:800 18px/1.05 Outfit,system-ui;letter-spacing:-.04em;
+}
+.logo span{line-height:1.05}
+.logo i{
+  width:38px;height:38px;border-radius:12px;display:grid;place-items:center;
+  background:var(--ink);color:var(--mint);font-style:normal;font-size:22px;
+  box-shadow:0 0 0 1px rgba(81,240,168,.25),0 8px 20px rgba(81,240,168,.25);
+}
+.nav{display:flex;align-items:center;gap:18px}
+.nav button{background:none;border:0;color:var(--muted);font-weight:600;transition:color .2s}
+.nav button:hover{color:var(--ink)}
+.pill{
+  font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;
+  border:1px solid var(--line);border-radius:999px;padding:8px 12px;white-space:nowrap;
+  background:rgba(255,255,255,.8);color:var(--muted);
+}
+
+main{max-width:1280px;margin:auto;padding:40px 32px 64px}
+.hero{
+  display:flex;justify-content:space-between;gap:36px;align-items:center;
+  margin-bottom:28px;animation:rise .8s .05s ease both;
+}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:11px;letter-spacing:.14em;font-weight:700;color:var(--muted);
+  padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.75);
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 4px rgba(81,240,168,.2);animation:pulse 2.4s ease-in-out infinite}
+h1{
+  font:700 clamp(40px,5vw,64px)/1.02 Outfit,system-ui;
+  letter-spacing:-.055em;margin:18px 0 14px;max-width:11ch;
+}
+h1 span{
+  background:linear-gradient(120deg,var(--ink) 20%, #147a52 55%, var(--mint));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.hero p{color:var(--muted);font-size:16px;line-height:1.7;max-width:42ch;margin:0}
+.hero-art{
+  position:relative;width:min(360px,100%);height:190px;padding:22px;
+  border-radius:calc(var(--radius) + 4px);overflow:hidden;
+  background:linear-gradient(160deg,#0a0a0a 0%, #12261c 55%, #0d1f17 100%);
+  border:1px solid rgba(81,240,168,.22);
+  box-shadow:var(--shadow), inset 0 1px 0 rgba(81,240,168,.12);
+  color:#e8fff4;
+}
+.hero-art small{font-size:10px;letter-spacing:.14em;font-weight:700;color:rgba(81,240,168,.9)}
+.art-bars{display:flex;align-items:end;gap:8px;height:78px;margin-top:18px}
+.art-bars i{width:22px;border-radius:6px 6px 0 0;background:rgba(255,255,255,.12);display:block;animation:barRise 1.1s ease both}
+.art-bars i:nth-child(1){animation-delay:.05s}.art-bars i:nth-child(2){animation-delay:.1s}
+.art-bars i:nth-child(3){animation-delay:.15s}.art-bars i:nth-child(4){animation-delay:.2s}
+.art-bars i:nth-child(5){animation-delay:.25s}.art-bars i:nth-child(6){animation-delay:.3s}
+.art-bars i:nth-child(7){animation-delay:.35s}.art-bars i:nth-child(8){animation-delay:.4s}
+.art-bars i:nth-child(9){animation-delay:.45s}
+.art-bars i:nth-last-child(-n+3){background:var(--mint)}
+.art-label{
+  position:absolute;right:18px;top:22px;
+  background:rgba(255,255,255,.08);border:1px solid rgba(81,240,168,.25);
+  color:#fff;padding:7px 10px;border-radius:10px;font-size:11px;backdrop-filter:blur(8px);
+}
+.art-footer{margin-top:12px;font-size:10px;color:rgba(232,255,244,.55);display:flex;justify-content:space-between;letter-spacing:.04em}
+
+.searchbox{
+  display:flex;gap:10px;align-items:center;padding:10px;
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);animation:rise .85s .1s ease both;
+}
+.location-input{flex:1;display:flex;gap:12px;align-items:center;padding-left:12px;min-width:0;color:var(--muted)}
+.location-input input{border:0;outline:none;width:100%;font-size:16px;color:var(--ink);padding:13px 0;background:transparent}
+.primary{
+  background:var(--ink);color:#fff;border:0;border-radius:14px;padding:14px 20px;font-weight:700;
+  transition:transform .18s ease, background .18s ease, box-shadow .18s ease;
+}
+.primary:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(10,10,10,.18)}
+.secondary{
+  background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:13px 16px;
+  color:var(--ink);font-weight:600;transition:background .18s ease,border-color .18s ease;
+}
+.secondary:hover{background:#ececec;border-color:#ddd}
+.searchbox select{padding:12px;border:0;border-left:1px solid var(--line);background:transparent;color:var(--ink);font-weight:600}
+#suggestions{display:grid;background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-top:8px;box-shadow:var(--shadow)}
+#suggestions button{border:0;border-bottom:1px solid var(--line);background:var(--card);text-align:left;padding:15px 16px;transition:background .15s}
+#suggestions button:last-child{border-bottom:0}
+#suggestions button:hover{background:var(--mint-soft)}
+
+.controls{display:flex;justify-content:space-between;align-items:center;margin:26px 0 18px;gap:14px;flex-wrap:wrap}
+.tabs{background:var(--soft);padding:5px;display:flex;border-radius:16px;gap:4px;border:1px solid var(--line)}
+.tabs button{border:0;background:transparent;color:var(--muted);padding:10px 16px;border-radius:12px;font-size:13px;font-weight:600;transition:all .18s}
+.tabs button.active{background:var(--ink);color:var(--mint);font-weight:700}
+.filters{display:flex;gap:14px;align-items:center}
+.filters select{background:transparent;border:0;color:var(--ink);padding:8px 0;font-weight:600}
+
+.notice{
+  display:flex;gap:12px;align-items:center;
+  border:1px solid rgba(81,240,168,.28);background:var(--mint-soft);
+  padding:14px 16px;border-radius:16px;font-size:12px;line-height:1.6;margin-bottom:22px;
+}
+.notice strong{font-weight:700}
+.notice button{margin-left:auto;white-space:nowrap;background:none;border:0;text-decoration:underline;color:var(--ink);font-weight:700}
+
+.layout{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(300px,1fr);gap:24px}
+.result-header{display:flex;align-items:center;justify-content:space-between;margin:0 0 14px}
+h2{font:700 22px/1.1 Outfit,system-ui;margin:0;letter-spacing:-.03em}
+.small{font-size:12px;color:var(--muted)}
+.cards{display:grid;gap:12px}
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;
+  transition:border-color .2s, transform .2s, box-shadow .2s;
+}
+.card:hover{border-color:rgba(81,240,168,.55);transform:translateY(-2px);box-shadow:var(--shadow)}
+.card.best{border-color:var(--mint);box-shadow:0 0 0 1px rgba(81,240,168,.35), var(--shadow)}
+.cardtop{display:flex;gap:13px;align-items:start}
+.charger{
+  width:40px;height:44px;border:1px solid var(--line);border-radius:12px;
+  display:grid;place-items:center;color:var(--ink);background:var(--mint-soft);font-size:22px;flex-shrink:0;
+}
+.card.best .charger{background:var(--ink);color:var(--mint);border-color:var(--ink)}
+.cardtitle{flex:1;min-width:0}
+.card h3{font:700 15px/1.25 Outfit,system-ui;margin:0 0 6px;letter-spacing:-.02em}
+.rate{text-align:right;white-space:nowrap}
+.rate strong{display:block;font:700 26px/1 Outfit,system-ui;letter-spacing:-.04em}
+.rate span{font-size:10px;color:var(--muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.meta{color:var(--muted);font-size:11px;line-height:1.7}
+.cardbottom{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;align-items:center}
+.window{font-size:12px}
+.window b{font-weight:700}
+.detail-btn{background:none;border:0;color:var(--ink);font-size:12px;font-weight:700;padding:8px 0 8px 8px}
+.detail-btn:hover{color:#147a52}
+.badge{
+  display:inline-block;font-size:10px;letter-spacing:.06em;font-weight:700;
+  background:var(--ink);color:var(--mint);border-radius:999px;padding:5px 9px;margin-bottom:10px;text-transform:uppercase;
+}
+.tag{color:#8a6a2f}
+
+.aside{position:sticky;top:18px;align-self:start}
+.mapwrap{
+  height:355px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
+  background:var(--soft);position:relative;box-shadow:var(--shadow);
+}
+#map{height:100%;z-index:1}
+.map-label{
+  position:absolute;top:14px;left:14px;z-index:500;
+  background:rgba(255,255,255,.92);padding:8px 12px;border-radius:999px;
+  border:1px solid var(--line);font-size:11px;font-weight:700;pointer-events:none;
+}
+.map-fallback{padding:80px 30px;line-height:1.8;text-align:center;color:var(--muted)}
+.marker{
+  border:1px solid var(--line);background:var(--ink);color:var(--mint);border-radius:10px;
+  padding:5px 9px;font:700 12px 'Plus Jakarta Sans',sans-serif;box-shadow:0 6px 16px rgba(10,10,10,.18);
+  white-space:nowrap;width:max-content!important;height:auto!important;
+}
+.map-you{background:var(--mint);border:3px solid white;border-radius:50%;box-shadow:0 0 0 6px rgba(81,240,168,.25)}
+
+.insight{
+  background:var(--ink);border-radius:var(--radius);padding:24px;color:#fff;margin-top:16px;
+  position:relative;overflow:hidden;border:1px solid rgba(81,240,168,.2);
+}
+.insight::before{
+  content:"";position:absolute;inset:auto -20% -40% auto;width:220px;height:220px;border-radius:50%;
+  background:radial-gradient(circle, rgba(81,240,168,.35), transparent 70%);
+}
+.insight .eyebrow{color:var(--mint);background:transparent;border-color:rgba(81,240,168,.25)}
+.insight h3{font:600 24px/1.25 Outfit,system-ui;margin:16px 0 10px;letter-spacing:-.03em;position:relative}
+.insight p{font-size:13px;color:rgba(255,255,255,.68);line-height:1.75;margin:0;position:relative}
+.insight button{
+  border:1px solid rgba(81,240,168,.35);background:transparent;color:var(--mint);
+  border-radius:12px;padding:10px 14px;margin-top:18px;font-weight:700;position:relative;
+}
+.insight button:hover{background:rgba(81,240,168,.08)}
+.energy{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid rgba(255,255,255,.1);margin-top:20px;padding-top:16px;font-size:12px;position:relative}
+.energy label{color:rgba(255,255,255,.72)}
+.energy span{display:inline-flex;align-items:center;gap:8px;color:rgba(255,255,255,.72);font-weight:600}
+.energy input{
+  width:72px;min-height:40px;box-sizing:border-box;
+  background:#0f0f0f;border:1px solid rgba(81,240,168,.35);border-radius:10px;
+  color:#fff;padding:8px 10px;font:600 14px/1.2 'Plus Jakarta Sans',system-ui,sans-serif;
+  outline:none;-moz-appearance:textfield;appearance:textfield;
+}
+.energy input:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(81,240,168,.18)}
+.energy input::-webkit-outer-spin-button,
+.energy input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+
+.footnote{font-size:11px;line-height:1.8;color:var(--muted);padding:16px 4px}
+.empty{padding:44px 24px;text-align:center;border:1px dashed #d4d4d4;border-radius:var(--radius);color:var(--muted);line-height:1.8;background:rgba(255,255,255,.6)}
+.empty h3{color:var(--ink);font-family:Outfit,system-ui}
+
+footer{
+  margin-top:48px;padding-top:20px;border-top:1px solid var(--line);
+  display:flex;gap:18px;justify-content:space-between;font-size:11px;color:var(--muted);
+}
+footer button{border:0;background:none;color:inherit;text-decoration:underline}
+
+dialog{
+  border:1px solid var(--line);border-radius:22px;padding:0;
+  width:min(620px,calc(100vw - 28px));max-height:min(90dvh,860px);color:var(--ink);
+  background:var(--card);box-shadow:0 30px 100px rgba(10,10,10,.2);
+  position:fixed;inset:auto;top:50%;left:50%;
+  margin:0;transform:translate(-50%,-50%);
+  overflow:hidden;display:flex;flex-direction:column;
+}
+dialog:not([open]){display:none}
+dialog[open]{animation:modalIn .28s cubic-bezier(.22,1,.36,1)}
+dialog::backdrop{background:rgba(10,10,10,.5);backdrop-filter:blur(4px);animation:fadeIn .2s ease}
+.modalhead{display:flex;align-items:start;justify-content:space-between;gap:15px;padding:22px 22px 0;flex-shrink:0}
+#modalBody{padding:12px 22px 22px;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.close{border:0;border-radius:50%;background:var(--soft);width:34px;height:34px;font-size:22px;flex-shrink:0}
+.modaltext{font-size:13px;line-height:1.8;color:var(--muted)}
+.modaltext a{color:#147a52;font-weight:600}
+.modal-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+.modal-actions a{text-decoration:none}
+.timeline{display:flex;gap:3px;align-items:end;height:90px;margin-top:20px}
+.timeline div{flex:1;background:#d7f7e8;border-radius:3px 3px 0 0;min-width:1px}
+.timeline div.low{background:var(--ink)}
+.timeline-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:10px;margin-top:6px}
+table{border-collapse:collapse;width:100%;font-size:12px;margin-top:17px}
+td,th{padding:10px 0;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--muted);font-weight:600}
+.editor{margin-top:20px;background:var(--soft);padding:17px;border-radius:16px}
+.editor label{font-size:11px;color:var(--muted);display:block;margin:12px 0 6px}
+.editor input,.editor select{padding:9px;border:1px solid var(--line);border-radius:10px;background:white;color:var(--ink);max-width:100%;min-width:0}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr 28px;gap:6px;margin-bottom:8px}
+.row button{border:0;background:none;color:var(--muted)}
+.error{color:#e11d48;font-size:12px}
+.success{color:#147a52;font-size:12px}
+#status{font-size:12px;padding:10px 2px;color:var(--muted);min-height:30px}
+#syncStatus{margin:0 0 4px}
+.mobile-map{display:none}
+.loading{opacity:.55;pointer-events:none}
+#more{width:100%;margin-top:16px}
+button[hidden],[hidden]{display:none!important}
+
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 4px rgba(81,240,168,.18)}50%{box-shadow:0 0 0 8px rgba(81,240,168,.08)}}
+@keyframes barRise{from{transform:scaleY(.35);opacity:.4}to{transform:scaleY(1);opacity:1}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes modalIn{from{opacity:0;transform:translate(-50%,-46%) scale(.98)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+@keyframes sheetUp{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)}}
+.art-bars i{transform-origin:bottom}
+body.modal-open{overflow:hidden;touch-action:none}
+
+@media(min-width:1500px){main{padding-top:48px}}
+@media(max-width:900px){
+  header{padding:0 20px}
+  main{padding:28px 20px 48px}
+  .hero-art{width:260px}
+  .layout{grid-template-columns:1.1fr 1fr;gap:16px}
+  .filters{gap:10px}
+  .tabs button{padding:10px 12px}
+  .card{padding:16px}
+  .rate strong{font-size:22px}
+}
+@media(max-width:680px){
+  header{height:68px;padding:0 16px}
+  .logo{font-size:17px}
+  .nav{gap:10px}
+  .nav .pill{display:none}
+  main{padding:24px 16px 40px}
+  .hero{margin-bottom:20px}
+  .hero-art{display:none}
+  h1{font-size:42px;letter-spacing:-.05em;margin:14px 0;max-width:none}
+  .hero p{font-size:14px;margin:0}
+  .searchbox{flex-wrap:wrap;gap:6px;padding:8px}
+  .location-input{flex-basis:70%;padding-left:8px}
+  .location-input input{font-size:16px}
+  .searchbox select{flex:1;border:0;background:var(--soft);border-radius:12px;min-height:44px}
+  .searchbox .secondary{flex:1;padding:12px 8px;white-space:nowrap}
+  .searchbox .primary{padding:13px}
+  .controls{gap:12px;margin-top:16px}
+  .tabs{width:100%;display:grid;grid-template-columns:1fr 1fr}
+  .tabs button{min-height:44px;flex:1;padding:11px 8px;font-size:12px}
+  .filters{width:100%;justify-content:space-between;font-size:12px}
+  .notice{align-items:start;padding:12px;font-size:11px;gap:8px}
+  .notice button{white-space:normal;min-width:65px;padding:0}
+  .layout{grid-template-columns:1fr}
+  .aside{position:static;grid-row:1}
+  .mapwrap{height:245px;display:none}
+  .mapwrap.show{display:block;margin-bottom:16px}
+  .insight{display:none}
+  .aside .footnote{display:none}
+  .mobile-map{display:block;background:none;border:0;color:var(--ink);font-size:12px;font-weight:700}
+  .result-header{flex-wrap:wrap;gap:10px}
+  .card{padding:16px}
+  .card h3{font-size:14px}
+  .rate strong{font-size:22px}
+  .cardbottom{gap:5px}
+  .window{font-size:11px}
+  .meta{font-size:10px}
+  footer{margin-top:28px;flex-wrap:wrap;line-height:1.8}
+  dialog{
+    top:auto;left:0;right:0;bottom:0;width:100%;max-width:100%;
+    max-height:min(88dvh,100%);transform:none;border-radius:22px 22px 0 0;
+    border-left:0;border-right:0;border-bottom:0;
+  }
+  dialog[open]{animation:sheetUp .32s cubic-bezier(.22,1,.36,1)}
+  .modalhead{padding:18px 18px 0}
+  #modalBody{padding:10px 18px 24px}
+  .row{grid-template-columns:1fr 1fr .9fr 24px}
+  .editor{padding:12px}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+}
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/" aria-label="Supercharger Saver home"><i>ϟ</i><span>Supercharger<br>Saver</span></a>
+  <nav class="nav">
+    <button id="about">How it works →</button>
+    <span class="pill">Built for the better stop</span>
+  </nav>
+</header>
+<main>
+  <section class="hero">
+    <div>
+      <div class="eyebrow"><span class="dot"></span> GOOD TIMING. BETTER CHARGING.</div>
+      <h1>Less searching.<br><span>More saving.</span></h1>
+      <p>Your next Supercharger, at a better time.<br>Compare nearby stops and find the lowest price window.</p>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+      <small>THE POWER OF TIMING</small>
+      <span class="art-label">A little later. A little less.</span>
+      <div class="art-bars">
+        <i style="height:40%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:88%"></i><i style="height:100%"></i>
+        <i style="height:82%"></i><i style="height:52%"></i><i style="height:31%"></i><i style="height:27%"></i>
+      </div>
+      <div class="art-footer"><span>DAY</span><span>ILLUSTRATION · NOT LIVE RATES</span><span>NIGHT</span></div>
+    </div>
+  </section>
+
+  <form id="search" class="searchbox">
+    <div class="location-input"><span aria-hidden="true">⌕</span><input id="location" aria-label="City, ZIP code or address" value="Irving, TX" placeholder="City, ZIP code or address" autocomplete="off" required maxlength="200"></div>
+    <button class="primary" id="searchBtn">Search</button>
+    <button type="button" class="secondary" id="locate">◎ Use my location</button>
+    <select id="radius" aria-label="Search radius">
+      <option value="10">Within 10 mi</option>
+      <option value="25" selected>Within 25 mi</option>
+      <option value="50">Within 50 mi</option>
+      <option value="100">Within 100 mi</option>
+    </select>
+  </form>
+  <div id="suggestions"></div>
+  <div id="status" role="status" aria-live="polite">Starting with Irving, Texas. Use your location or search anywhere.</div>
+  <p id="syncStatus" class="small" role="status">Checking daily sync status…</p>
+
+  <div class="controls">
+    <div class="tabs" role="group" aria-label="Sort chargers">
+      <button data-sort="now" class="active" aria-pressed="true">Cheapest now</button>
+      <button data-sort="later" aria-pressed="false">Lowest in 24h</button>
+      <button data-sort="earliest" aria-pressed="false">Earliest &amp; cheapest nearby</button>
+      <button data-sort="distance" aria-pressed="false">Nearest</button>
+    </div>
+    <div class="filters">
+      <select id="rateType" aria-label="Pricing category">
+        <option value="member">Tesla vehicle rate</option>
+        <option value="public">Non-member rate</option>
+      </select>
+      <select id="power" aria-label="Minimum power">
+        <option value="0">Any speed</option>
+        <option value="150">150+ kW</option>
+        <option value="250">250+ kW</option>
+      </select>
+      <button class="mobile-map" id="mapToggle">Show map</button>
+    </div>
+  </div>
+  <p id="sortHelp" class="small" hidden>Earliest start of each station’s lowest daily rate → lower price → shorter distance. “Go now” means that rate is available now; travel time is not included.</p>
+  <div class="notice"><span aria-hidden="true">ⓘ</span><div id="notice">Loading station coverage…</div></div>
+
+  <div class="layout">
+    <section>
+      <div class="result-header">
+        <h2 id="heading">Nearby Superchargers</h2>
+        <span class="small" id="count">Finding stops…</span>
+      </div>
+      <div id="cards" class="cards"></div>
+      <button id="more" class="secondary" hidden>Show more stations</button>
+    </section>
+    <aside class="aside">
+      <div class="mapwrap">
+        <div id="map"><div class="map-fallback">Loading your neighborhood map…</div></div>
+        <div class="map-label">◎ Nearby Superchargers</div>
+      </div>
+      <div class="insight">
+        <div class="eyebrow">◷ THE CHARGE WINDOW</div>
+        <h3 id="insightTitle">The right stop.<br>The right time.</h3>
+        <p id="insightText">Compare the price now with the lowest published rate over the next 24 hours. No opening every pin, one at a time.</p>
+        <button id="explain">Understand the prices →</button>
+        <div class="energy">
+          <label for="energy">Your estimated charge</label>
+          <span><input id="energy" type="number" inputmode="numeric" min="1" max="200" step="1" value="40" aria-label="Estimated energy in kWh"> kWh</span>
+        </div>
+      </div>
+      <div class="footnote">Distances are straight-line estimates, not driving distance. Stall counts are installed capacity, not live availability. Check access and pricing before you drive.</div>
+    </aside>
+  </div>
+
+  <footer>
+    <span>Supercharger Saver · An independent tool. Not affiliated with Tesla.</span>
+    <span><a href="https://www.tesla.com/findus" target="_blank" rel="noopener">Station &amp; price data: Tesla</a> · <button id="dataInfo">Data & privacy</button></span>
+  </footer>
+</main>
+
+<dialog id="modal">
+  <div class="modalhead"><h2 id="modalTitle"></h2><button class="close" aria-label="Close dialog">×</button></div>
+  <div id="modalBody"></div>
+</dialog>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

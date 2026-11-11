@@ -1,0 +1,5 @@
+import http from 'node:http';import {readFile} from 'node:fs/promises';import {resolve,extname} from 'node:path';
+import stations from '../api/stations.js';import pricing from '../api/pricing.js';import search from '../api/search.js';
+import status from '../api/status.js';import sync from '../api/sync.js';
+const routes={'/api/status':status,'/api/sync':sync,'/api/stations':stations,'/api/pricing':pricing,'/api/search':search};const root=resolve('public');const port=Number(process.env.PORT||3000);const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};
+http.createServer(async(req,res)=>{const path=new URL(req.url,'http://localhost').pathname;if(routes[path])return routes[path](req,res);try{const file=resolve(root,'.'+decodeURIComponent(path==='/'?'/index.html':path));if(!file.startsWith(root+'/'))throw Error();const data=await readFile(file);res.setHeader('Content-Type',types[extname(file)]||'application/octet-stream');res.end(data);}catch{res.statusCode=404;res.end('Not found');}}).listen(port,()=>console.log('Supercharger Saver: http://localhost:'+port));

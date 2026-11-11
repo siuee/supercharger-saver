@@ -1,0 +1,16 @@
+{
+  "name": "supercharger-saver",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Find nearby Tesla Superchargers and compare published charging price windows.",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

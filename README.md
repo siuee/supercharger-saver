@@ -4,6 +4,8 @@ Find nearby Tesla Superchargers and compare **when** it’s cheapest to charge �
 
 **Live app:** [https://supercharger-saver.vercel.app](https://supercharger-saver.vercel.app)
 
+**Search / SEO:** Canonical URL, Open Graph + Twitter cards, JSON-LD (WebSite / WebApplication / FAQ), `robots.txt`, and `sitemap.xml` are shipped with the site. After deploy, submit the sitemap in [Google Search Console](https://search.google.com/search-console) → `https://supercharger-saver.vercel.app/sitemap.xml`.
+
 ## What this project does
 
 Supercharger Saver is a simple website that helps everyday drivers answer one practical question:

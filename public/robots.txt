@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# Keep operator / write endpoints out of search indexes
+Disallow: /api/sync
+Disallow: /api/ingest
+
+Sitemap: https://supercharger-saver.vercel.app/sitemap.xml

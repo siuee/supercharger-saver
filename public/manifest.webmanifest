@@ -1,1 +1,26 @@
-{"name":"Supercharger Saver","short_name":"Supercharger Saver","start_url":"/","display":"standalone","background_color":"#fdfdfd","theme_color":"#0a0a0a","icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}
+{
+  "name": "Supercharger Saver",
+  "short_name": "Supercharger Saver",
+  "description": "Compare nearby Tesla Supercharger prices and find cheaper charge windows.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fdfdfd",
+  "theme_color": "#0a0a0a",
+  "lang": "en-US",
+  "categories": ["utilities", "navigation", "travel"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/og.jpg",
+      "sizes": "1280x720",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}

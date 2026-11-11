@@ -21,6 +21,7 @@ test('stations MGET attaches shared Redis prices for concurrent readers',async()
    const c=JSON.parse(options.body);let result=null;
    if(c[0]==='MGET')result=c.slice(1).map(k=>saved.get(k)||null);
    if(c[0]==='ZADD')result=1;
+   if(c[0]==='ZREMRANGEBYRANK')result=0;
    if(c[0]==='GET')result=saved.get(c[1])||null;
    return Response.json({result});
   }
@@ -69,25 +70,34 @@ test('cron auth and missing setup fail safely',async()=>{
 });
 test('status explains empty first run without exposing operator secrets',async()=>{
  const env={...process.env};
- process.env.UPSTASH_REDIS_REST_URL='https://redis.test';process.env.UPSTASH_REDIS_REST_TOKEN='test';process.env.CRON_SECRET='secret';
+ process.env.UPSTASH_REDIS_REST_URL='https://redis.test';process.env.UPSTASH_REDIS_REST_TOKEN='test';process.env.CRON_SECRET='unit-test-cron-secret-24b';
  const original=fetch;
  globalThis.fetch=async()=>Response.json({result:null});
  try{
   const s=await status();
   assert.equal(s.body.configured,true);
+  assert.equal(s.body.lastRun,undefined);
+  assert.equal(s.body.proxyReady,undefined);
   assert.match(s.body.message,/Cloud daily price sync is ready|first Vercel cron has not run yet/i);
   assert.doesNotMatch(s.body.message,/SCRAPERAPI_KEY|TESLA_PROXY_URL|SCRAPFLY_KEY/i);
  }finally{globalThis.fetch=original;for(const key of ['UPSTASH_REDIS_REST_URL','UPSTASH_REDIS_REST_TOKEN','CRON_SECRET']){if(env[key]===undefined)delete process.env[key];else process.env[key]=env[key];}}
 });
+test('rejects short CRON_SECRET values',()=>{
+ const env={...process.env};
+ process.env.CRON_SECRET='too-short';
+ try{assert.equal(authorized('Bearer too-short'),false);}
+ finally{if(env.CRON_SECRET===undefined)delete process.env.CRON_SECRET;else process.env.CRON_SECRET=env.CRON_SECRET;}
+});
 test('daily sync persists official prices, records failures, and releases lock',async()=>{
  const original=fetch,env={...process.env};const saved=new Map();let fail=false;
- process.env.UPSTASH_REDIS_REST_URL='https://redis.test';process.env.UPSTASH_REDIS_REST_TOKEN='test';process.env.CRON_SECRET='test-secret';process.env.SYNC_DAILY_LIMIT='1';process.env.SCRAPFLY_KEY='test-key';
+ const cronSecret='unit-test-cron-secret-24b';
+ process.env.UPSTASH_REDIS_REST_URL='https://redis.test';process.env.UPSTASH_REDIS_REST_TOKEN='test';process.env.CRON_SECRET=cronSecret;process.env.SYNC_DAILY_LIMIT='1';process.env.SCRAPFLY_KEY='test-key';
  globalThis.fetch=async(url,options)=>{
  if(String(url).includes('redis.test')){const c=JSON.parse(options.body);let result=null;
  if(c[0]==='SET'){saved.set(c[1],c[2]);result='OK';}
  if(c[0]==='GET')result=saved.get(c[1])||null;
  if(c[0]==='ZRANGE')result=['2204'];
- if(c[0]==='ZREMRANGEBYSCORE')result=0;
+ if(c[0]==='ZREMRANGEBYSCORE'||c[0]==='ZREMRANGEBYRANK')result=0;
  if(c[0]==='SADD'||c[0]==='SREM')result=1;
  if(c[0]==='SCARD')result=1;
  if(c[0]==='EVAL'){saved.delete('scs:sync-lock');result=1;}
@@ -98,8 +108,8 @@ test('daily sync persists official prices, records failures, and releases lock',
   return Response.json({result:{success:true,content:JSON.stringify({data:{data:{...fixture,name:'Official station'}}})}});
  }
  if(fail)throw Error('Tesla temporarily unavailable');return Response.json({data:{data:{...fixture,name:'Official station'}}});};
- try{assert.equal(authorized('Bearer test-secret'),true);assert.equal(authorized('Bearer wrong'),false);
+ try{assert.equal(authorized('Bearer '+cronSecret),true);assert.equal(authorized('Bearer wrong'),false);
  const ok=await sync();assert.equal(ok.status,200);assert.equal(ok.body.succeeded,1);assert.equal(ok.body.limit,1);assert.equal(ok.body.mode,'cloud');assert.ok(JSON.parse(saved.get('scs:station:2204')).prices.member);assert.equal(saved.has('scs:sync-lock'),false);assert.ok(saved.has('scs:sync-cursor'));
- fail=true;const bad=await sync();assert.equal(bad.status,503);assert.equal(bad.body.failed,1);assert.equal((await status()).body.lastRun.complete,false);
+ fail=true;const bad=await sync();assert.equal(bad.status,503);assert.equal(bad.body.failed,1);assert.match((await status()).body.message,/unavailable|deferred|updated/i);
  }finally{globalThis.fetch=original;for(const key of ['UPSTASH_REDIS_REST_URL','UPSTASH_REDIS_REST_TOKEN','CRON_SECRET','SYNC_DAILY_LIMIT','SCRAPFLY_KEY']){if(env[key]===undefined)delete process.env[key];else process.env[key]=env[key];}}
 });

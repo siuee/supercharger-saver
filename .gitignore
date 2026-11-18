@@ -11,3 +11,4 @@ scraper-*.json
 scraper-*.txt
 price*.json
 stations.json
+.env*

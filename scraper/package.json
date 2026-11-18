@@ -1,0 +1,17 @@
+{
+  "name": "supercharger-saver-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Daily free-tier Tesla price scraper writing to Neon Postgres.",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "scrape": "node index.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2"
+  }
+}

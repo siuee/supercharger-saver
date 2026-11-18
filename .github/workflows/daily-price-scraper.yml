@@ -1,0 +1,34 @@
+name: Daily price scraper
+
+on:
+  schedule:
+    # Once per day (UTC morning) — free GitHub Actions budget.
+    - cron: '27 11 * * *'
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Stations to scrape this run (1–80)'
+        required: false
+        default: '60'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install app deps
+        run: npm ci
+      - name: Install scraper deps
+        working-directory: scraper
+        run: npm ci
+      - name: Run scraper batch
+        working-directory: scraper
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SCRAPER_BATCH_SIZE: ${{ github.event.inputs.batch_size || '60' }}
+        run: npm start

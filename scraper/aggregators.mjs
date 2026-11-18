@@ -351,24 +351,107 @@ function guessState(station){
 }
 
 /**
+ * Pull every open US Tesla AFDC station with pricing in one shot when possible,
+ * falling back to a full 51-jurisdiction state walk.
+ */
+export async function fetchAfdcTeslaStationsNationwide({apiKey=nrelApiKey()}={}){
+ try{
+  const rows=await fetchAfdcTeslaStations({limit:'all',apiKey});
+  if(rows.length)return{rows,mode:'nationwide',states:['ALL']};
+ }catch{/* fall through to per-state */}
+ const rows=[];
+ const states=[];
+ const errors=[];
+ for(const state of US_STATES){
+  try{
+   const part=await fetchAfdcTeslaStations({state,limit:'all',apiKey});
+   rows.push(...part);
+   states.push(state);
+  }catch(e){
+   errors.push(state+': '+(e.message||e));
+  }
+ }
+ return{rows,mode:'by-state',states,error:errors.length?errors.join('; '):undefined};
+}
+
+async function upsertAfdcPricedRows(pricedRows,catalog,{
+ maxUpserts=Infinity,
+ cache,
+ getExisting=null,
+ upsert,
+ report
+}={}){
+ let filled=0;
+ for(const row of pricedRows){
+  if(filled>=maxUpserts)break;
+  const hit=matchCatalogStation(row,catalog,{maxMeters:MATCH_METERS_DEFAULT});
+  if(!hit)continue;
+  report.matched++;
+  const station=hit.station;
+  let existing=cache.get(station.id);
+  if(existing===undefined&&typeof getExisting==='function'){
+   existing=await getExisting(station.id);
+   cache.set(station.id,existing||null);
+  }
+  if(!pricesNeedAggregatorFill(existing||null)){report.skipped++;continue;}
+  const updated=new Date().toISOString();
+  const prices=syntheticSchedulePrices({
+   rate:row.rate,
+   zone:zoneForState(row.state),
+   via:'afdc',
+   source:'AFDC approximate · '+String(row.ev_pricing||('$'+row.rate+'/kWh')),
+   sourceUrl:row.sourceUrl,
+   updated
+  });
+  await upsert(station,prices,updated,row);
+  filled++;
+  report.filled++;
+  cache.set(station.id,{prices,fetchedAt:updated,rawCurrent:prices});
+ }
+ return filled;
+}
+
+/**
  * Progressive nationwide AFDC fill for empty catalog stations (free-tier safe).
  * Advances a state cursor in the returned nextState so callers can persist it.
+ * Pass fullSweep/statesPerRun='all' to cover every US state/DC in one call.
  */
 export async function bulkFillFromAfdc(catalog,{
  statesPerRun=3,
  maxUpserts=80,
  startStateIndex=0,
+ fullSweep=false,
  existingById=null,
  getExisting=null,
  upsert
 }={}){
  if(typeof upsert!=='function')throw Error('upsert required');
  const cache=existingById instanceof Map?existingById:new Map();
- const report={scanned:0,matched:0,filled:0,skipped:0,states:[],nextStateIndex:startStateIndex};
+ const allStates=fullSweep||statesPerRun==='all'||Number(statesPerRun)>=US_STATES.length;
+ const upsertCap=allStates
+  ?(Number.isFinite(Number(maxUpserts))?Math.max(Number(maxUpserts),catalog?.length||0):Infinity)
+  :Math.max(1,Number(maxUpserts)||80);
+ const report={scanned:0,matched:0,filled:0,skipped:0,states:[],nextStateIndex:startStateIndex,mode:allStates?'full':'progressive'};
+
+ if(allStates){
+  const nationwide=await fetchAfdcTeslaStationsNationwide();
+  report.states=nationwide.states||['ALL'];
+  report.fetchMode=nationwide.mode;
+  if(nationwide.error)report.error=nationwide.error;
+  const priced=nationwide.rows.filter(r=>r.rate!=null);
+  report.scanned=priced.length;
+  report.afdcRows=nationwide.rows.length;
+  report.afdcPricedRows=priced.length;
+  await upsertAfdcPricedRows(priced,catalog,{maxUpserts:upsertCap,cache,getExisting,upsert,report});
+  report.nextStateIndex=0;
+  return report;
+ }
+
  let filled=0;
  let idx=((Number(startStateIndex)||0)%US_STATES.length+US_STATES.length)%US_STATES.length;
+ const runStates=Math.max(1,Math.min(Number(statesPerRun)||3,US_STATES.length));
 
- for(let n=0;n<statesPerRun&&filled<maxUpserts;n++){
+ for(let n=0;n<runStates&&filled<upsertCap;n++){
   const state=US_STATES[idx];
   report.states.push(state);
   let rows=[];
@@ -380,36 +463,71 @@ export async function bulkFillFromAfdc(catalog,{
   }
   const priced=rows.filter(r=>r.rate!=null);
   report.scanned+=priced.length;
-
-  for(const row of priced){
-   if(filled>=maxUpserts)break;
-   const hit=matchCatalogStation(row,catalog,{maxMeters:MATCH_METERS_DEFAULT});
-   if(!hit)continue;
-   report.matched++;
-   const station=hit.station;
-   let existing=cache.get(station.id);
-   if(existing===undefined&&typeof getExisting==='function'){
-    existing=await getExisting(station.id);
-    cache.set(station.id,existing||null);
-   }
-   if(!pricesNeedAggregatorFill(existing||null)){report.skipped++;continue;}
-   const updated=new Date().toISOString();
-   const prices=syntheticSchedulePrices({
-    rate:row.rate,
-    zone:zoneForState(row.state||state),
-    via:'afdc',
-    source:'AFDC approximate · '+String(row.ev_pricing||('$'+row.rate+'/kWh')),
-    sourceUrl:row.sourceUrl,
-    updated
-   });
-   await upsert(station,prices,updated,row);
-   filled++;
-   report.filled++;
-   cache.set(station.id,{prices,fetchedAt:updated,rawCurrent:prices});
-  }
+  filled+=await upsertAfdcPricedRows(priced,catalog,{
+   maxUpserts:upsertCap-filled,cache,getExisting,upsert,report
+  });
   idx=(idx+1)%US_STATES.length;
  }
  report.nextStateIndex=idx;
+ return report;
+}
+
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+/**
+ * Walk every empty catalog station through ChargeAlong (+ optional OCM).
+ * AFDC should already have run; this drains remaining gaps with free-tier pacing.
+ */
+export async function drainEmptyStationsWithAggregators(stations,{
+ existingById=null,
+ getExisting=null,
+ upsert,
+ concurrency=4,
+ delayMs=350,
+ onProgress=null
+}={}){
+ if(typeof upsert!=='function')throw Error('upsert required');
+ const cache=existingById instanceof Map?existingById:new Map();
+ const report={attempted:0,filled:0,skipped:0,noRate:0,errors:0,byVia:{}};
+ const queue=[...stations];
+ let cursor=0;
+
+ async function one(station){
+  report.attempted++;
+  let existing=cache.get(station.id);
+  if(existing===undefined&&typeof getExisting==='function'){
+   existing=await getExisting(station.id);
+   cache.set(station.id,existing||null);
+  }
+  if(!pricesNeedAggregatorFill(existing||null)){report.skipped++;return;}
+  try{
+   const fill=await fillStationFromAggregators(station,{
+    existing:existing||null,
+    afdcCache:null,
+    upsert:async(s,prices,updated)=>{
+     await upsert(s,prices,updated);
+     cache.set(s.id,{prices,fetchedAt:updated,rawCurrent:prices});
+    }
+   });
+   if(fill.filled){
+    report.filled++;
+    const via=fill.via||'aggregator';
+    report.byVia[via]=(report.byVia[via]||0)+1;
+   }else report.noRate++;
+  }catch{
+   report.errors++;
+  }
+  if(typeof onProgress==='function'&&report.attempted%50===0)onProgress({...report});
+  if(delayMs>0)await sleep(delayMs+Math.floor(Math.random()*200));
+ }
+
+ const workers=Array.from({length:Math.max(1,Math.min(concurrency,8))},async()=>{
+  while(cursor<queue.length){
+   const i=cursor++;
+   await one(queue[i]);
+  }
+ });
+ await Promise.all(workers);
  return report;
 }
 

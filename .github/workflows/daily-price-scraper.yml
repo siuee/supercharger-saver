@@ -8,15 +8,21 @@ on:
     - cron: '12 23 * * *'
   workflow_dispatch:
     inputs:
+      full_sweep:
+        description: 'Full US catalog sweep (nationwide AFDC + drain all empties)'
+        type: boolean
+        required: false
+        default: false
       batch_size:
-        description: 'Stations to scrape this run (1–80)'
+        description: 'Stations to scrape this run when full_sweep is false (1–80)'
         required: false
         default: '60'
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Full sweep can take hours (ChargeAlong drain across ~3k stations).
+    timeout-minutes: ${{ github.event.inputs.full_sweep == 'true' && 360 || 90 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,13 +38,17 @@ jobs:
         working-directory: scraper
         run: npm ci
       - name: Install curl_cffi (TLS impersonation)
+        if: ${{ github.event.inputs.full_sweep != 'true' }}
         run: python -m pip install curl_cffi
-      - name: Run scraper batch
+      - name: Run scraper
         working-directory: scraper
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SCRAPER_FULL_SWEEP: ${{ github.event.inputs.full_sweep == 'true' && '1' || '0' }}
           SCRAPER_BATCH_SIZE: ${{ github.event.inputs.batch_size || '60' }}
           SCRAPER_BULK_AFDC: '1'
+          SCRAPER_DRAIN_CONCURRENCY: '4'
+          SCRAPER_DRAIN_DELAY_MS: '300'
           # Optional — empty secrets are fine (DEMO_KEY / skip Bright Data / skip OCM).
           NREL_API_KEY: ${{ secrets.NREL_API_KEY }}
           OCM_API_KEY: ${{ secrets.OCM_API_KEY }}

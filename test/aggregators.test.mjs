@@ -10,7 +10,10 @@ import {
  pricesNeedAggregatorFill,
  bookIsTeslaLive,
  fillStationFromAggregators,
- resolveAggregatorPrices
+ resolveAggregatorPrices,
+ bulkFillFromAfdc,
+ drainEmptyStationsWithAggregators,
+ US_STATES
 } from '../scraper/aggregators.mjs';
 import {evaluate} from '../public/logic.js';
 
@@ -130,5 +133,90 @@ test('status and UI copy do not require Tampermonkey or localhost',()=>{
  assert.match(readme,/No localhost \/ Tampermonkey dependency/i);
  assert.match(readme,/DATABASE_URL/i);
  assert.match(scraper,/aggregator|AFDC|chargealong/i);
+ assert.match(scraper,/FULL SWEEP|full-sweep|SCRAPER_FULL_SWEEP/i);
  assert.doesNotMatch(scraper,/Install public\/scout\.user\.js \(Tampermonkey\)/i);
+});
+
+test('bulkFillFromAfdc fullSweep matches priced AFDC rows to entire catalog',async()=>{
+ const original=globalThis.fetch;
+ const catalog=[
+  {id:'a',name:'Austin Domain',lat:30.401,lng:-97.725,address:'Austin, TX'},
+  {id:'b',name:'No Price Match',lat:40.0,lng:-105.0,address:'Boulder, CO'}
+ ];
+ let upserts=0;
+ globalThis.fetch=async url=>{
+  const u=String(url);
+  assert.match(u,/alt-fuel-stations/);
+  return Response.json({fuel_stations:[
+   {station_name:'Austin Domain Tesla',latitude:30.4011,longitude:-97.7251,state:'TX',
+    street_address:'1 Domain',city:'Austin',zip:'78758',ev_pricing:'$0.42 per kWh',
+    ev_network_web:'https://afdc.energy.gov/stations/'},
+   {station_name:'Boulder no $',latitude:40.0001,longitude:-105.0001,state:'CO',
+    street_address:'1 Pearl',city:'Boulder',zip:'80302',ev_pricing:'Call for pricing'}
+  ]});
+ };
+ try{
+  const report=await bulkFillFromAfdc(catalog,{
+   fullSweep:true,
+   upsert:async()=>{upserts++;}
+  });
+  assert.equal(report.mode,'full');
+  assert.equal(report.filled,1);
+  assert.equal(upserts,1);
+  assert.ok(report.afdcPricedRows>=1);
+ }finally{globalThis.fetch=original;}
+});
+
+test('drainEmptyStationsWithAggregators fills ChargeAlong matches and skips fresh rows',async()=>{
+ const original=globalThis.fetch;
+ const stations=[
+  {id:'need',name:'Grapevine, TX',lat:32.941942,lng:-97.065861,address:'Grapevine, TX 76051'},
+  {id:'fresh',name:'Already Priced',lat:33.0,lng:-97.0,address:'TX'}
+ ];
+ const freshBook={member:{schedule:[{from:'00:00',to:'24:00',rate:.2}],via:'afdc',approximate:true}};
+ const existingById=new Map([
+  ['fresh',{rawCurrent:freshBook,prices:freshBook,fetchedAt:new Date().toISOString()}]
+ ]);
+ let filledIds=[];
+ globalThis.fetch=async url=>{
+  const u=String(url);
+  if(u.includes('chargealong.io/v1/nearby')){
+   return Response.json({data:{sites:[{
+    public_id:'abc12345',name:'Grapevine Supercharger',network:'tesla',
+    lat:32.94195,lng:-97.06585,cost_kind:'paid',address:'Grapevine TX'
+   }]}});
+  }
+  if(u.includes('chargealong.io/v1/sites/')){
+   return Response.json({data:{
+    locality:{time_zone:'America/Chicago'},
+    site:{
+     public_id:'abc12345',name:'Grapevine Supercharger',lat:32.94195,lng:-97.06585,
+     cost:{kind:'paid',currency:'USD',per_kwh_min:.37,per_kwh_max:.37,text:'$0.37/kWh'},
+     path:'/en/united-states/texas/grapevine/tesla/x/'
+    }
+   }});
+  }
+  if(u.includes('alt-fuel-stations'))return Response.json({fuel_stations:[]});
+  throw Error('unexpected '+u);
+ };
+ try{
+  const report=await drainEmptyStationsWithAggregators(stations,{
+   existingById,
+   concurrency:2,
+   delayMs:0,
+   upsert:async(s)=>{filledIds.push(s.id);}
+  });
+  assert.equal(report.filled,1);
+  assert.equal(report.skipped,1);
+  assert.deepEqual(filledIds,['need']);
+  assert.equal(report.byVia.chargealong,1);
+  assert.ok(US_STATES.includes('TX'));
+ }finally{globalThis.fetch=original;}
+});
+
+test('workflow exposes full_sweep dispatch input',()=>{
+ const yml=readFileSync(new URL('../.github/workflows/daily-price-scraper.yml',import.meta.url),'utf8');
+ assert.match(yml,/full_sweep:/);
+ assert.match(yml,/SCRAPER_FULL_SWEEP/);
+ assert.match(yml,/timeout-minutes:/);
 });

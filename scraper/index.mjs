@@ -8,6 +8,11 @@
  * 3) Optional Bright Data Web Unlocker (if BRIGHTDATA_API_TOKEN set)
  * 4) Free aggregator fill (AFDC / ChargeAlong / optional OCM) for failed/empty rows
  *
+ * Full sweep (SCRAPER_FULL_SWEEP=1):
+ *  - Nationwide AFDC match against the entire US catalog first
+ *  - Then drain every remaining empty station via ChargeAlong/OCM
+ *  - Tesla live details only when Bright Data is configured (Actions IPs get 403)
+ *
  * Soft-completes with exit 0 so Actions stays green while Neon fills progressively.
  */
 import {readFileSync} from 'node:fs';
@@ -43,19 +48,33 @@ const {
  setSyncState,
  setLastScraperRun,
  getStationPrices,
- getStationPrice
+ getStationPrice,
+ countPricedStations
 }=await import(new URL('lib/db.js',rootUrl));
 const {parseDetail}=await import(new URL('lib/tesla.js',rootUrl));
 const {normalizeFallbackCatalog}=await import(new URL('lib/service.js',rootUrl));
 const {
  fillStationFromAggregators,
- bulkFillFromAfdc
+ bulkFillFromAfdc,
+ drainEmptyStationsWithAggregators,
+ pricesNeedAggregatorFill
 }=await import(new URL('scraper/aggregators.mjs',rootUrl));
 
 const FALLBACK_CATALOG_URL='https://supercharge.info/service/supercharge/allSites';
 const BROWSER_UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+function fullSweepEnabled(){
+ const v=String(process.env.SCRAPER_FULL_SWEEP||'').trim().toLowerCase();
+ return v==='1'||v==='true'||v==='yes';
+}
+
 function batchSize(){
+ if(fullSweepEnabled()){
+  const n=Number(process.env.SCRAPER_BATCH_SIZE);
+  // Full sweep defaults to the entire catalog; allow an explicit override.
+  if(Number.isFinite(n)&&n>=1)return Math.floor(n);
+  return Number.POSITIVE_INFINITY;
+ }
  const n=Number(process.env.SCRAPER_BATCH_SIZE);
  if(Number.isFinite(n)&&n>=1)return Math.min(Math.floor(n),80);
  return 40+Math.floor(Math.random()*41);
@@ -154,17 +173,19 @@ async function fetchViaBrightData(station){
  return detail;
 }
 
-async function fetchDetail(station){
+async function fetchDetail(station,{preferBrightDataOnly=false}={}){
  const errors=[];
- try{return{detail:fetchViaImpersonate(station.id),via:'actions-scraper'};}
- catch(e){errors.push('impersonate: '+(e.message||e));}
- try{return{detail:await fetchViaNative(station),via:'actions-scraper'};}
- catch(e){errors.push('native: '+(e.message||e));}
+ if(!preferBrightDataOnly){
+  try{return{detail:fetchViaImpersonate(station.id),via:'actions-scraper'};}
+  catch(e){errors.push('impersonate: '+(e.message||e));}
+  try{return{detail:await fetchViaNative(station),via:'actions-scraper'};}
+  catch(e){errors.push('native: '+(e.message||e));}
+ }
  if(brightDataConfigured()){
   try{return{detail:await fetchViaBrightData(station),via:'brightdata'};}
   catch(e){errors.push('brightdata: '+(e.message||e));}
  }
- throw Error(errors.join(' | '));
+ throw Error(errors.join(' | ')||'Tesla fetch unavailable');
 }
 
 async function upsertPrices(station,prices,updated,metaExtra={}){
@@ -183,12 +204,13 @@ async function upsertPrices(station,prices,updated,metaExtra={}){
  });
 }
 
-async function scrapeOneTesla(station){
+async function scrapeOneTesla(station,{preferBrightDataOnly=false}={}){
  const updated=new Date().toISOString();
  let fetched;
  try{
-  fetched=await fetchDetail(station);
+  fetched=await fetchDetail(station,{preferBrightDataOnly});
  }catch(first){
+  if(preferBrightDataOnly)throw first;
   await sleep(jitter(1500,3500));
   fetched=await fetchDetail(station).catch(()=>{throw first;});
  }
@@ -233,13 +255,145 @@ async function tryAggregatorFill(station,existing,afdcCache,report){
  return false;
 }
 
-async function main(){
- if(!process.env.DATABASE_URL&&!process.env.POSTGRES_URL){
-  console.error('DATABASE_URL is required');
-  process.exit(1);
+async function loadExistingMap(ids){
+ const map=new Map();
+ const chunk=400;
+ for(let i=0;i<ids.length;i+=chunk){
+  const part=await getStationPrices(ids.slice(i,i+chunk)).catch(()=>new Map());
+  for(const [k,v] of part)map.set(k,v);
  }
- await ensureSchema();
- const catalog=await loadCatalog();
+ return map;
+}
+
+async function runFullSweep(catalog){
+ const pricedBefore=await countPricedStations().catch(()=>0);
+ const report={
+  startedAt:new Date().toISOString(),
+  mode:'full-sweep',
+  catalogSize:catalog.length,
+  pricedBefore,
+  succeeded:0,
+  priced:0,
+  failed:0,
+  aggregatorFilled:0,
+  blocked:!brightDataConfigured(),
+  brightData:brightDataConfigured(),
+  errors:[],
+  phases:{}
+ };
+
+ console.log(`FULL SWEEP starting: catalog ${catalog.length}, pricedBefore ${pricedBefore}, brightData=${report.brightData}`);
+
+ // Phase 1 — nationwide AFDC match against the entire catalog (fast, free).
+ const bulkEnabled=String(process.env.SCRAPER_BULK_AFDC||'1')!=='0';
+ if(bulkEnabled){
+  try{
+   console.log('phase-1 afdc-nationwide begin');
+   const bulk=await bulkFillFromAfdc(catalog,{
+    fullSweep:true,
+    maxUpserts:catalog.length,
+    getExisting:async id=>getStationPrice(id).catch(()=>null),
+    upsert:async(station,prices,updated,row)=>{
+     await upsertPrices(station,prices,updated,{name:row?.name,address:row?.address});
+    }
+   });
+   report.phases.afdc=bulk;
+   report.aggregatorFilled+=(bulk.filled||0);
+   report.priced+=(bulk.filled||0);
+   await setSyncState('afdc_bulk_cursor',{stateIndex:0,updatedAt:new Date().toISOString(),last:bulk,fullSweep:true});
+   console.log('phase-1 afdc-nationwide',JSON.stringify({
+    filled:bulk.filled,scanned:bulk.scanned,matched:bulk.matched,
+    afdcRows:bulk.afdcRows,afdcPricedRows:bulk.afdcPricedRows,mode:bulk.fetchMode,states:bulk.states?.length
+   }));
+  }catch(e){
+   report.phases.afdcError=String(e.message||e).slice(0,240);
+   console.warn('phase-1 afdc-fail',report.phases.afdcError);
+  }
+ }
+
+ const existingMap=await loadExistingMap(catalog.map(s=>s.id));
+ const needFill=catalog.filter(s=>pricesNeedAggregatorFill(existingMap.get(s.id)||null));
+ console.log(`phase-2 empties remaining: ${needFill.length} / ${catalog.length}`);
+
+ // Phase 2 — optional Bright Data Tesla unlock for empties (skip datacenter 403 spam).
+ if(brightDataConfigured()&&needFill.length){
+  const bdLimit=Math.min(needFill.length,Number(process.env.SCRAPER_BRIGHTDATA_MAX)||needFill.length);
+  console.log(`phase-2a brightdata Tesla unlock for up to ${bdLimit} empties`);
+  let bdFilled=0;
+  for(let i=0;i<bdLimit;i++){
+   const station=needFill[i];
+   try{
+    const result=await scrapeOneTesla(station,{preferBrightDataOnly:true});
+    report.succeeded++;
+    if(result.priced){
+     report.priced++;
+     bdFilled++;
+     existingMap.set(station.id,{prices:{member:{via:'brightdata'}},fetchedAt:new Date().toISOString(),rawCurrent:{member:{via:'brightdata'}}});
+    }
+    console.log('bd-ok',station.id,result.priced?'priced':'empty');
+   }catch(e){
+    report.failed++;
+    const msg=String(e.message||e).slice(0,240);
+    if(/403|bot protection|blocked/i.test(msg))report.blocked=true;
+    report.errors.push({id:station.id,error:msg});
+    await recordStationError(station.id,msg).catch(()=>{});
+    console.warn('bd-fail',station.id,msg);
+   }
+   await sleep(jitter(500,1500));
+  }
+  report.phases.brightdata={attempted:bdLimit,filled:bdFilled};
+ }
+
+ // Phase 3 — ChargeAlong / OCM drain for every still-empty station.
+ const stillEmpty=catalog.filter(s=>pricesNeedAggregatorFill(existingMap.get(s.id)||null));
+ console.log(`phase-3 aggregator drain: ${stillEmpty.length} stations`);
+ try{
+  const drain=await drainEmptyStationsWithAggregators(stillEmpty,{
+   existingById:existingMap,
+   concurrency:Number(process.env.SCRAPER_DRAIN_CONCURRENCY)||4,
+   delayMs:Number(process.env.SCRAPER_DRAIN_DELAY_MS)||300,
+   upsert:async(station,prices,updated)=>upsertPrices(station,prices,updated),
+   onProgress:p=>console.log('drain-progress',JSON.stringify(p))
+  });
+  report.phases.drain=drain;
+  report.aggregatorFilled+=(drain.filled||0);
+  report.priced+=(drain.filled||0);
+  console.log('phase-3 drain done',JSON.stringify(drain));
+ }catch(e){
+  report.phases.drainError=String(e.message||e).slice(0,240);
+  console.warn('phase-3 drain-fail',report.phases.drainError);
+ }
+
+ const pricedAfter=await countPricedStations().catch(()=>pricedBefore);
+ report.pricedAfter=pricedAfter;
+ report.finishedAt=new Date().toISOString();
+ report.complete=true;
+ report.fillRate=catalog.length?Number(((pricedAfter/catalog.length)*100).toFixed(2)):0;
+ report.note=[
+  'Full US catalog sweep finished.',
+  'pricedBefore='+pricedBefore,
+  'pricedAfter='+pricedAfter,
+  'fillRate='+report.fillRate+'%',
+  'AFDC/ChargeAlong/OCM rates are approximate flat $/kWh when published — not live Tesla TOU.',
+  report.brightData?'Bright Data unlock attempted for empties.':'No Bright Data token — skipped Tesla live fetch (Actions IPs get 403).'
+ ].join(' ');
+
+ await setSyncState('scraper_cursor',{offset:0,batchSize:catalog.length,updatedAt:new Date().toISOString(),fullSweep:true});
+ await setLastScraperRun(report);
+ console.log(JSON.stringify({
+  mode:report.mode,
+  catalogSize:report.catalogSize,
+  pricedBefore,
+  pricedAfter,
+  fillRate:report.fillRate,
+  aggregatorFilled:report.aggregatorFilled,
+  phases:report.phases,
+  note:report.note
+ },null,2));
+ process.exitCode=0;
+}
+
+async function runBatch(catalog){
  const limit=batchSize();
  const state=(await getSyncState('scraper_cursor'))||{offset:0};
  let offset=Number(state.offset)||0;
@@ -252,6 +406,7 @@ async function main(){
  const nextOffset=catalog.length?(offset+queue.length)%catalog.length:0;
  const existingMap=await getStationPrices(queue.map(s=>s.id)).catch(()=>new Map());
  const afdcCache=new Map();
+ const pricedBefore=await countPricedStations().catch(()=>0);
 
  const report={
   startedAt:new Date().toISOString(),
@@ -260,6 +415,7 @@ async function main(){
   batchSize:queue.length,
   offset,
   nextOffset,
+  pricedBefore,
   succeeded:0,
   priced:0,
   failed:0,
@@ -322,6 +478,8 @@ async function main(){
   }
  }
 
+ const pricedAfter=await countPricedStations().catch(()=>pricedBefore);
+ report.pricedAfter=pricedAfter;
  await setSyncState('scraper_cursor',{offset:nextOffset,batchSize:limit,updatedAt:new Date().toISOString()});
  report.finishedAt=new Date().toISOString();
  report.complete=report.failed===0;
@@ -336,11 +494,24 @@ async function main(){
   priced:report.priced,
   failed:report.failed,
   aggregatorFilled:report.aggregatorFilled,
+  pricedBefore,
+  pricedAfter,
   blocked:report.blocked,
   nextOffset,
   note:report.note
  },null,2));
  process.exitCode=0;
+}
+
+async function main(){
+ if(!process.env.DATABASE_URL&&!process.env.POSTGRES_URL){
+  console.error('DATABASE_URL is required');
+  process.exit(1);
+ }
+ await ensureSchema();
+ const catalog=await loadCatalog();
+ if(fullSweepEnabled())await runFullSweep(catalog);
+ else await runBatch(catalog);
 }
 
 main().catch(e=>{

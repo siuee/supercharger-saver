@@ -2,13 +2,13 @@
 /**
  * Free daily price scraper (GitHub Actions) + multi-strategy fetch.
  *
- * Datacenter IPs are usually blocked by Tesla. Strategies (in order):
+ * Strategies (in order):
  * 1) Chrome TLS impersonation via Python curl_cffi
  * 2) Native fetch (rarely works from Actions)
- * 3) Soft-complete: advance cursor, keep prior Neon rows, exit 0
+ * 3) Optional Bright Data Web Unlocker (if BRIGHTDATA_API_TOKEN set)
+ * 4) Free aggregator fill (AFDC / ChargeAlong / optional OCM) for failed/empty rows
  *
- * Real nationwide coverage comes from residential browser scouts
- * (public/scout.user.js) posting to /api/scout.
+ * Soft-completes with exit 0 so Actions stays green while Neon fills progressively.
  */
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
@@ -41,10 +41,16 @@ const {
  recordStationError,
  getSyncState,
  setSyncState,
- setLastScraperRun
+ setLastScraperRun,
+ getStationPrices,
+ getStationPrice
 }=await import(new URL('lib/db.js',rootUrl));
 const {parseDetail}=await import(new URL('lib/tesla.js',rootUrl));
 const {normalizeFallbackCatalog}=await import(new URL('lib/service.js',rootUrl));
+const {
+ fillStationFromAggregators,
+ bulkFillFromAfdc
+}=await import(new URL('scraper/aggregators.mjs',rootUrl));
 
 const FALLBACK_CATALOG_URL='https://supercharge.info/service/supercharge/allSites';
 const BROWSER_UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -57,6 +63,7 @@ function batchSize(){
 
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function jitter(minMs,maxMs){return minMs+Math.floor(Math.random()*(maxMs-minMs+1));}
+function brightDataConfigured(){return!!(process.env.BRIGHTDATA_API_TOKEN||'').trim();}
 
 async function loadCatalog(){
  const r=await fetch(FALLBACK_CATALOG_URL,{
@@ -87,7 +94,7 @@ function fetchViaImpersonate(stationId){
  return parsed.detail;
 }
 
-async function fetchViaNative(station){
+function teslaDetailUrl(station){
  const url=new URL('https://www.tesla.com/api/findus/get-charger-details');
  url.search=new URLSearchParams({
   locationSlug:station.id,
@@ -95,6 +102,11 @@ async function fetchViaNative(station){
   locale:'en-US',
   isInHkMoTw:String(!!station.inHkMoTw)
  });
+ return url;
+}
+
+async function fetchViaNative(station){
+ const url=teslaDetailUrl(station);
  const r=await fetch(url,{
   headers:{
    Accept:'application/json, text/plain, */*',
@@ -114,40 +126,111 @@ async function fetchViaNative(station){
  return detail;
 }
 
+async function fetchViaBrightData(station){
+ const token=(process.env.BRIGHTDATA_API_TOKEN||'').trim();
+ if(!token)throw Error('brightdata unset');
+ const zone=(process.env.BRIGHTDATA_ZONE||'web_unlocker1').trim()||'web_unlocker1';
+ const r=await fetch('https://api.brightdata.com/request',{
+  method:'POST',
+  headers:{
+   Authorization:'Bearer '+token,
+   'Content-Type':'application/json',
+   Accept:'application/json'
+  },
+  body:JSON.stringify({zone,url:teslaDetailUrl(station).toString(),format:'raw'}),
+  signal:AbortSignal.timeout(90000)
+ });
+ const text=await r.text();
+ if(!r.ok)throw Error('brightdata HTTP '+r.status);
+ if(/Access Denied|cpr_chlge/i.test(text)||text.trimStart().startsWith('<HTML>'))throw Error('brightdata still blocked');
+ let json;
+ try{json=JSON.parse(text);}
+ catch{throw Error('brightdata bad json');}
+ const envelope=json?.data?.data?json
+  :(typeof json?.body==='string'?JSON.parse(json.body)
+  :(typeof json?.content==='string'?JSON.parse(json.content):json));
+ const detail=envelope?.data?.data||envelope?.data||envelope;
+ if(!detail?.name||!detail.timeZone)throw Error('brightdata details unavailable');
+ return detail;
+}
+
 async function fetchDetail(station){
  const errors=[];
- try{return fetchViaImpersonate(station.id);}
+ try{return{detail:fetchViaImpersonate(station.id),via:'actions-scraper'};}
  catch(e){errors.push('impersonate: '+(e.message||e));}
- try{return await fetchViaNative(station);}
+ try{return{detail:await fetchViaNative(station),via:'actions-scraper'};}
  catch(e){errors.push('native: '+(e.message||e));}
+ if(brightDataConfigured()){
+  try{return{detail:await fetchViaBrightData(station),via:'brightdata'};}
+  catch(e){errors.push('brightdata: '+(e.message||e));}
+ }
  throw Error(errors.join(' | '));
 }
 
-async function scrapeOne(station){
+async function upsertPrices(station,prices,updated,metaExtra={}){
+ return upsertStationSuccess(station,{
+  prices,
+  fetchedAt:updated,
+  meta:{
+   name:metaExtra.name||station.name,
+   lat:station.lat,
+   lng:station.lng,
+   address:metaExtra.address||station.address,
+   country:metaExtra.country||station.country,
+   power:metaExtra.power??station.power,
+   stalls:metaExtra.stalls??station.stalls
+  }
+ });
+}
+
+async function scrapeOneTesla(station){
  const updated=new Date().toISOString();
- let detail;
+ let fetched;
  try{
-  detail=await fetchDetail(station);
+  fetched=await fetchDetail(station);
  }catch(first){
   await sleep(jitter(1500,3500));
-  detail=await fetchDetail(station).catch(()=>{throw first;});
+  fetched=await fetchDetail(station).catch(()=>{throw first;});
  }
+ const {detail,via}=fetched;
  const prices=parseDetail(detail,station.id,updated);
  for(const book of Object.values(prices||{})){
-  book.via='actions-scraper';
+  book.via=via;
   book.updated=updated;
  }
  const a=detail.address||{};
- const meta={
-  name:detail.name,
-  lat:station.lat,
-  lng:station.lng,
-  address:[a.streetNumber,a.street,a.city,a.state,a.postalCode].filter(Boolean).join(' ')||station.address,
-  country:a.country||station.country,
-  power:detail.maxPowerKw??station.power,
-  stalls:detail.publicStallCount??station.stalls
- };
- return upsertStationSuccess(station,{prices,fetchedAt:updated,meta});
+ return upsertStationSuccess(station,{
+  prices,
+  fetchedAt:updated,
+  meta:{
+   name:detail.name,
+   lat:station.lat,
+   lng:station.lng,
+   address:[a.streetNumber,a.street,a.city,a.state,a.postalCode].filter(Boolean).join(' ')||station.address,
+   country:a.country||station.country,
+   power:detail.maxPowerKw??station.power,
+   stalls:detail.publicStallCount??station.stalls
+  }
+ });
+}
+
+async function tryAggregatorFill(station,existing,afdcCache,report){
+ try{
+  const fill=await fillStationFromAggregators(station,{
+   existing,
+   afdcCache,
+   upsert:async(s,prices,updated)=>upsertPrices(s,prices,updated)
+  });
+  if(fill.filled){
+   report.aggregatorFilled++;
+   report.priced++;
+   console.log('agg',station.id,fill.via);
+   return true;
+  }
+ }catch(ae){
+  console.warn('agg-fail',station.id,String(ae.message||ae).slice(0,160));
+ }
+ return false;
 }
 
 async function main(){
@@ -167,10 +250,12 @@ async function main(){
   queue.push(catalog[(offset+i)%catalog.length]);
  }
  const nextOffset=catalog.length?(offset+queue.length)%catalog.length:0;
+ const existingMap=await getStationPrices(queue.map(s=>s.id)).catch(()=>new Map());
+ const afdcCache=new Map();
 
  const report={
   startedAt:new Date().toISOString(),
-  mode:'github-actions-multistrategy',
+  mode:'github-actions-cloud-automatic',
   catalogSize:catalog.length,
   batchSize:queue.length,
   offset,
@@ -178,17 +263,23 @@ async function main(){
   succeeded:0,
   priced:0,
   failed:0,
+  aggregatorFilled:0,
   blocked:false,
+  brightData:brightDataConfigured(),
   errors:[]
  };
 
  console.log(`Scraper starting: batch ${queue.length} / catalog ${catalog.length} @ offset ${offset}`);
 
  for(const station of queue){
+  let teslaPriced=false;
   try{
-   const result=await scrapeOne(station);
+   const result=await scrapeOneTesla(station);
    report.succeeded++;
-   if(result.priced)report.priced++;
+   if(result.priced){
+    report.priced++;
+    teslaPriced=true;
+   }
    console.log('ok',station.id,result.priced?'priced':'empty');
   }catch(e){
    report.failed++;
@@ -198,25 +289,57 @@ async function main(){
    await recordStationError(station.id,msg).catch(()=>{});
    console.warn('fail',station.id,msg);
   }
-  await sleep(jitter(800,1800));
+
+  // Fill from aggregators when Tesla failed or returned an empty schedule.
+  if(!teslaPriced){
+   await tryAggregatorFill(station,existingMap.get(station.id)||null,afdcCache,report);
+  }
+  await sleep(jitter(400,1200));
+ }
+
+ // Progressive nationwide AFDC bulk fill for empty stations (free DEMO_KEY / NREL_API_KEY).
+ const bulkEnabled=String(process.env.SCRAPER_BULK_AFDC||'1')!=='0';
+ if(bulkEnabled){
+  try{
+   const bulkState=(await getSyncState('afdc_bulk_cursor'))||{stateIndex:0};
+   const bulk=await bulkFillFromAfdc(catalog,{
+    statesPerRun:Number(process.env.AFDC_STATES_PER_RUN)||3,
+    maxUpserts:Number(process.env.AFDC_MAX_UPSERTS)||80,
+    startStateIndex:Number(bulkState.stateIndex)||0,
+    getExisting:async id=>getStationPrice(id).catch(()=>null),
+    upsert:async(station,prices,updated,row)=>{
+     await upsertPrices(station,prices,updated,{name:row?.name,address:row?.address});
+    }
+   });
+   report.afdcBulk=bulk;
+   report.aggregatorFilled+=(bulk.filled||0);
+   report.priced+=(bulk.filled||0);
+   await setSyncState('afdc_bulk_cursor',{stateIndex:bulk.nextStateIndex,updatedAt:new Date().toISOString(),last:bulk});
+   console.log('afdc-bulk',JSON.stringify({filled:bulk.filled,states:bulk.states,next:bulk.nextStateIndex}));
+  }catch(e){
+   report.afdcBulkError=String(e.message||e).slice(0,240);
+   console.warn('afdc-bulk-fail',report.afdcBulkError);
+  }
  }
 
  await setSyncState('scraper_cursor',{offset:nextOffset,batchSize:limit,updatedAt:new Date().toISOString()});
  report.finishedAt=new Date().toISOString();
  report.complete=report.failed===0;
  report.note=report.blocked
-  ?'Tesla blocked datacenter fetches. Neon kept prior rows. Install public/scout.user.js (Tampermonkey) so residential browsers fill wanted stations.'
+  ?(report.aggregatorFilled
+   ?'Tesla blocked datacenter fetches; filled '+report.aggregatorFilled+' station(s) from free aggregators (flat/approx rates). Optional Bright Data unlocks live TOU.'
+   :'Tesla blocked datacenter fetches. Neon kept prior rows; aggregator harvest found no matching $/kWh for this batch. Next run continues AFDC bulk fill.')
   :'Batch finished';
  await setLastScraperRun(report);
  console.log(JSON.stringify({
   succeeded:report.succeeded,
   priced:report.priced,
   failed:report.failed,
+  aggregatorFilled:report.aggregatorFilled,
   blocked:report.blocked,
   nextOffset,
   note:report.note
  },null,2));
- // Soft-success: cursor advanced and DB updated even when Tesla blocks every request.
  process.exitCode=0;
 }
 

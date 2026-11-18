@@ -39,19 +39,28 @@ Tesla Supercharger prices often change by time of day (cheaper overnight, more e
 | Piece | Role |
 |---|---|
 | **Neon Postgres** | Source of truth for station prices (`station_prices` + `sync_state`) |
-| **GitHub Actions scraper** | Once-daily batch (40–80 stations) via [`.github/workflows/daily-price-scraper.yml`](.github/workflows/daily-price-scraper.yml) |
+| **GitHub Actions scraper** | Daily cloud harvest via [`.github/workflows/daily-price-scraper.yml`](.github/workflows/daily-price-scraper.yml) |
 | **Website (Vercel)** | Reads Neon only — never calls Tesla for visitor requests |
+
+**No localhost / Tampermonkey dependency** for normal users. After you push to GitHub and deploy on Vercel with `DATABASE_URL`, the site works for everyone on the internet; prices fill automatically from the cloud harvest.
 
 Failed scrapes **never wipe** good prices. When today’s scrape misses a station, the API can serve `previous_prices` with `freshness: "previous"`, and the UI shows **Previous record · retrieved {date}**.
 
 There are **no per-user tables**. A request with `lat`/`lng` filters the shared catalog and joins Neon prices. User searches never call Tesla live.
 
-## Daily scraper
+## Daily cloud price pipeline
 
 1. Loads US open stations from Supercharge.info.
 2. Rotates through the catalog using a Neon `sync_state` cursor.
-3. Fetches Tesla `get-charger-details` **directly** (no paid proxy required).
-4. UPSERTs successes into Neon; records `last_error` on failure without clearing prices.
+3. Tries Tesla `get-charger-details` (TLS impersonation → native → optional Bright Data Web Unlocker).
+4. When Tesla is blocked or returns no schedule, fills from **free aggregators**:
+   - **NREL AFDC** (`DEMO_KEY` by default, override with `NREL_API_KEY`) — parses `ev_pricing` `$X.XX/kWh`
+   - **ChargeAlong** (keyless) — flat `cost.per_kwh_*` when published
+   - **Open Charge Map** (optional `OCM_API_KEY`) — parses `UsageCost`
+5. Matches aggregator rows to catalog stations by lat/lng (≤250 m) and UPSERTs synthetic all-day member/public books stamped with `via: afdc|chargealong|ocm` and `approximate: true`.
+6. Runs a progressive nationwide AFDC bulk fill each run (state cursor) so empty stations gain approximate rates over time.
+
+Aggregator rates are **flat / approximate**. Live Tesla time-of-use needs optional Bright Data (`BRIGHTDATA_API_TOKEN`).
 
 Manual run: Actions → **Daily price scraper** → **Run workflow**, or locally:
 
@@ -60,7 +69,17 @@ npm run migrate
 npm run scrape
 ```
 
-Requires `DATABASE_URL` (and `SCRAPER_BATCH_SIZE` optionally).
+### Environment variables
+
+| Variable | Required? | Purpose |
+|---|---|---|
+| `DATABASE_URL` | **Yes** (Vercel + Actions) | Neon connection — enough for approximate cloud prices |
+| `NREL_API_KEY` | Optional | AFDC key (defaults to free `DEMO_KEY`) |
+| `OCM_API_KEY` | Optional | Open Charge Map |
+| `BRIGHTDATA_API_TOKEN` | Optional | Web Unlocker for live Tesla TOU |
+| `BRIGHTDATA_ZONE` | Optional | Defaults to `web_unlocker1` |
+| `SCRAPER_BATCH_SIZE` | Optional | Tesla batch size (1–80) |
+| `CRON_SECRET` | Optional | Protects `/api/sync` and `/api/ingest` (≥24 chars) |
 
 ## Deploy on Vercel
 
@@ -68,7 +87,7 @@ Requires `DATABASE_URL` (and `SCRAPER_BATCH_SIZE` optionally).
 2. Install **Neon** via Vercel Marketplace (free). Env vars including `DATABASE_URL` are injected automatically.
 3. Set `CRON_SECRET` (≥24 characters) if you use `/api/sync` or `/api/ingest`.
 4. Add the same `DATABASE_URL` to GitHub Actions secrets for the scraper workflow.
-5. Deploy. Open the site and search; rates fill as scraper batches succeed.
+5. Deploy. Open the site and search; rates fill as cloud harvest batches succeed (Tesla when reachable, aggregators otherwise).
 
 Without Neon, locations still work; stored prices will be empty until the database and scraper are connected.
 

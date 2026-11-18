@@ -4,6 +4,8 @@ on:
   schedule:
     # Once per day (UTC morning) — free GitHub Actions budget.
     - cron: '27 11 * * *'
+    # Secondary afternoon pass to progress AFDC bulk fill.
+    - cron: '12 23 * * *'
   workflow_dispatch:
     inputs:
       batch_size:
@@ -36,4 +38,11 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SCRAPER_BATCH_SIZE: ${{ github.event.inputs.batch_size || '60' }}
+          SCRAPER_BULK_AFDC: '1'
+          # Optional — empty secrets are fine (DEMO_KEY / skip Bright Data / skip OCM).
+          NREL_API_KEY: ${{ secrets.NREL_API_KEY }}
+          OCM_API_KEY: ${{ secrets.OCM_API_KEY }}
+          BRIGHTDATA_API_TOKEN: ${{ secrets.BRIGHTDATA_API_TOKEN }}
+          BRIGHTDATA_ZONE: ${{ secrets.BRIGHTDATA_ZONE }}
         run: npm start
+        # Soft-success is handled inside scraper/index.mjs (exit 0) so Tesla blocks never fail the job.

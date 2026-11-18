@@ -231,3 +231,12 @@ test('scraper prioritizes scout_wanted and fillWantedFirst before catalog drain'
  assert.match(db,/listPriorityEmptyStationIds/);
  assert.match(db,/scout_wanted/);
 });
+
+test('full sweep Bright Data path targets stations lacking Tesla live TOU',()=>{
+ const scraper=readFileSync(new URL('../scraper/index.mjs',import.meta.url),'utf8');
+ assert.match(scraper,/needsTeslaLive/);
+ assert.match(scraper,/bookIsTeslaLive/);
+ assert.match(scraper,/preferBrightDataOnly:\s*true/);
+ assert.match(scraper,/BRIGHTDATA_API_TOKEN unset/);
+ assert.match(scraper,/teslaLiveAfter|teslaFillRate/);
+});

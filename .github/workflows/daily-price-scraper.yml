@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       full_sweep:
-        description: 'Full US catalog sweep (nationwide AFDC + drain all empties)'
+        description: 'One-shot US harvest: Bright Data Tesla TOU for all sites lacking live rates, then AFDC/aggregator fill gaps'
         type: boolean
         required: false
         default: false

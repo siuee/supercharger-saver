@@ -59,6 +59,7 @@ const {
  bulkFillFromAfdc,
  drainEmptyStationsWithAggregators,
  pricesNeedAggregatorFill,
+ bookIsTeslaLive,
  US_STATES
 }=await import(new URL('scraper/aggregators.mjs',rootUrl));
 
@@ -85,6 +86,17 @@ function batchSize(){
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function jitter(minMs,maxMs){return minMs+Math.floor(Math.random()*(maxMs-minMs+1));}
 function brightDataConfigured(){return!!(process.env.BRIGHTDATA_API_TOKEN||'').trim();}
+
+/** True when station lacks a live Tesla TOU book (AFDC/approx counts as still needing Tesla). */
+function needsTeslaLive(row){
+ if(!row)return true;
+ const raw=row.rawCurrent&&typeof row.rawCurrent==='object'?row.rawCurrent:null;
+ const current=raw&&Object.keys(raw).length?raw
+  :(row.hasCurrent===false?{}:(row.prices&&typeof row.prices==='object'?row.prices:{}));
+ const books=Object.values(current||{});
+ if(!books.length)return true;
+ return!books.some(bookIsTeslaLive);
+}
 
 async function loadCatalog(){
  const r=await fetch(FALLBACK_CATALOG_URL,{
@@ -395,43 +407,51 @@ async function runFullSweep(catalog){
  }
 
  const existingMap=await loadExistingMap(catalog.map(s=>s.id));
- const needFill=prioritizeStations(
-  catalog.filter(s=>pricesNeedAggregatorFill(existingMap.get(s.id)||null)),
+ // One-time cloud Tesla harvest: every station lacking live Tesla TOU (AFDC approx still counts as needing Tesla).
+ const needTesla=prioritizeStations(
+  catalog.filter(s=>needsTeslaLive(existingMap.get(s.id)||null)),
   priorityIds
  );
- console.log(`phase-2 empties remaining: ${needFill.length} / ${catalog.length} (priority-first)`);
+ console.log(`phase-2 Tesla targets (no live TOU): ${needTesla.length} / ${catalog.length} (priority-first)`);
 
- // Phase 2 — optional Bright Data Tesla unlock for empties (skip datacenter 403 spam).
- // Wanted / DFW empties are first in needFill so live Tesla TOU lands for user searches first.
- if(brightDataConfigured()&&needFill.length){
-  const bdLimit=Math.min(needFill.length,Number(process.env.SCRAPER_BRIGHTDATA_MAX)||needFill.length);
-  console.log(`phase-2a brightdata Tesla unlock for up to ${bdLimit} empties`);
-  let bdFilled=0;
+ // Phase 2 — Bright Data Web Unlocker for ALL stations missing Tesla live rates (cloud-only path).
+ if(brightDataConfigured()&&needTesla.length){
+  const bdLimit=Math.min(needTesla.length,Number(process.env.SCRAPER_BRIGHTDATA_MAX)||needTesla.length);
+  console.log(`phase-2a brightdata Tesla unlock for up to ${bdLimit} stations`);
+  let bdFilled=0,bdEmpty=0;
   for(let i=0;i<bdLimit;i++){
-   const station=needFill[i];
+   const station=needTesla[i];
    try{
     const result=await scrapeOneTesla(station,{preferBrightDataOnly:true});
     report.succeeded++;
     if(result.priced){
      report.priced++;
      bdFilled++;
-     existingMap.set(station.id,{prices:{member:{via:'brightdata'}},fetchedAt:new Date().toISOString(),rawCurrent:{member:{via:'brightdata'}}});
-    }
+     existingMap.set(station.id,{
+      prices:{member:{via:'brightdata'}},
+      fetchedAt:new Date().toISOString(),
+      rawCurrent:{member:{via:'brightdata',source:'Tesla public schedule'}},
+      hasCurrent:true
+     });
+    }else bdEmpty++;
     console.log('bd-ok',station.id,result.priced?'priced':'empty');
    }catch(e){
     report.failed++;
     const msg=String(e.message||e).slice(0,240);
     if(/403|bot protection|blocked/i.test(msg))report.blocked=true;
-    report.errors.push({id:station.id,error:msg});
+    if(report.errors.length<80)report.errors.push({id:station.id,error:msg});
     await recordStationError(station.id,msg).catch(()=>{});
     console.warn('bd-fail',station.id,msg);
    }
-   await sleep(jitter(500,1500));
+   await sleep(jitter(400,1200));
   }
-  report.phases.brightdata={attempted:bdLimit,filled:bdFilled};
+  report.phases.brightdata={attempted:bdLimit,filled:bdFilled,emptyDetail:bdEmpty,failed:report.failed};
+ }else if(!brightDataConfigured()){
+  console.warn('phase-2a SKIPPED — BRIGHTDATA_API_TOKEN unset (Actions cannot reach Tesla without Web Unlocker)');
+  report.phases.brightdata={skipped:true,reason:'BRIGHTDATA_API_TOKEN unset'};
  }
 
- // Phase 3 — ChargeAlong / OCM drain for every still-empty station (wanted first).
+ // Phase 3 — aggregator drain ONLY for stations still completely empty (not for AFDC→Tesla upgrade targets).
  const stillEmpty=prioritizeStations(
   catalog.filter(s=>pricesNeedAggregatorFill(existingMap.get(s.id)||null)),
   priorityIds
@@ -455,17 +475,23 @@ async function runFullSweep(catalog){
  }
 
  const pricedAfter=await countPricedStations().catch(()=>pricedBefore);
+ const teslaAfter=catalog.filter(s=>!needsTeslaLive(existingMap.get(s.id)||null)).length;
  report.pricedAfter=pricedAfter;
+ report.teslaLiveAfter=teslaAfter;
  report.finishedAt=new Date().toISOString();
  report.complete=true;
  report.fillRate=catalog.length?Number(((pricedAfter/catalog.length)*100).toFixed(2)):0;
+ report.teslaFillRate=catalog.length?Number(((teslaAfter/catalog.length)*100).toFixed(2)):0;
  report.note=[
-  'Full US catalog sweep finished.',
+  'Full US catalog sweep finished (cloud Actions → Neon).',
   'pricedBefore='+pricedBefore,
   'pricedAfter='+pricedAfter,
+  'teslaLiveAfter='+teslaAfter,
   'fillRate='+report.fillRate+'%',
-  'AFDC/ChargeAlong/OCM rates are approximate flat $/kWh when published — not live Tesla TOU.',
-  report.brightData?'Bright Data unlock attempted for empties.':'No Bright Data token — skipped Tesla live fetch (Actions IPs get 403).'
+  'teslaFillRate='+report.teslaFillRate+'%',
+  report.brightData
+   ?'Bright Data Web Unlocker attempted Tesla get-charger-details for stations lacking live TOU.'
+   :'BLOCKED: No BRIGHTDATA_API_TOKEN secret — Tesla live harvest skipped (Actions IPs get 403). Set BRIGHTDATA_API_TOKEN (+ optional BRIGHTDATA_ZONE) and re-run full_sweep.'
  ].join(' ');
 
  await setSyncState('scraper_cursor',{offset:0,batchSize:catalog.length,updatedAt:new Date().toISOString(),fullSweep:true});

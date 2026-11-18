@@ -220,3 +220,14 @@ test('workflow exposes full_sweep dispatch input',()=>{
  assert.match(yml,/SCRAPER_FULL_SWEEP/);
  assert.match(yml,/timeout-minutes:/);
 });
+
+test('scraper prioritizes scout_wanted and fillWantedFirst before catalog drain',()=>{
+ const scraper=readFileSync(new URL('../scraper/index.mjs',import.meta.url),'utf8');
+ const db=readFileSync(new URL('../lib/db.js',import.meta.url),'utf8');
+ assert.match(scraper,/fillWantedFirst/);
+ assert.match(scraper,/prioritizeStations/);
+ assert.match(scraper,/listPriorityEmptyStationIds|loadPriorityIds/);
+ assert.match(scraper,/priorityFirst/);
+ assert.match(db,/listPriorityEmptyStationIds/);
+ assert.match(db,/scout_wanted/);
+});

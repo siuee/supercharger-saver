@@ -49,7 +49,8 @@ const {
  setLastScraperRun,
  getStationPrices,
  getStationPrice,
- countPricedStations
+ countPricedStations,
+ listPriorityEmptyStationIds
 }=await import(new URL('lib/db.js',rootUrl));
 const {parseDetail}=await import(new URL('lib/tesla.js',rootUrl));
 const {normalizeFallbackCatalog}=await import(new URL('lib/service.js',rootUrl));
@@ -57,7 +58,8 @@ const {
  fillStationFromAggregators,
  bulkFillFromAfdc,
  drainEmptyStationsWithAggregators,
- pricesNeedAggregatorFill
+ pricesNeedAggregatorFill,
+ US_STATES
 }=await import(new URL('scraper/aggregators.mjs',rootUrl));
 
 const FALLBACK_CATALOG_URL='https://supercharge.info/service/supercharge/allSites';
@@ -265,6 +267,74 @@ async function loadExistingMap(ids){
  return map;
 }
 
+/** Prefer scout_wanted + DFW empties ahead of random catalog drain. */
+function prioritizeStations(stations,priorityIds){
+ if(!Array.isArray(stations)||!stations.length)return[];
+ const byId=new Map(stations.map(s=>[String(s.id),s]));
+ const seen=new Set();
+ const out=[];
+ for(const id of priorityIds||[]){
+  const s=byId.get(String(id));
+  if(!s||seen.has(s.id))continue;
+  seen.add(s.id);
+  out.push(s);
+ }
+ for(const s of stations){
+  if(seen.has(s.id))continue;
+  seen.add(s.id);
+  out.push(s);
+ }
+ return out;
+}
+
+async function loadPriorityIds(catalog){
+ const fromDb=await listPriorityEmptyStationIds({limit:200,includeDbEmpties:true}).catch(()=>[]);
+ // Soft DFW box boost when catalog coords are present (recent empties without scout_wanted rows).
+ const dfw=[];
+ for(const s of catalog||[]){
+  if(!Number.isFinite(s.lat)||!Number.isFinite(s.lng))continue;
+  if(s.lat>=32.3&&s.lat<=33.4&&s.lng>=-97.6&&s.lng<=-96.4)dfw.push(String(s.id));
+ }
+ return[...new Set([...(fromDb||[]).map(String),...dfw])];
+}
+
+/**
+ * AFDC first-pass for priority empties: run their states (TX first) before catalog drain.
+ */
+async function fillWantedFirst(catalog,priorityIds,report){
+ const byId=new Map(catalog.map(s=>[String(s.id),s]));
+ const wantedStations=priorityIds.map(id=>byId.get(String(id))).filter(Boolean);
+ if(!wantedStations.length)return{filled:0,states:[],scanned:0};
+ const stateSet=new Set();
+ for(const s of wantedStations){
+  const addr=String(s.address||'');
+  const m=addr.match(/\b([A-Z]{2})\b(?:\s+\d{5})?/);
+  if(m&&US_STATES.includes(m[1]))stateSet.add(m[1]);
+ }
+ // Always try TX early when any DFW/priority empties look Texan or lat/lng is in TX box.
+ if(wantedStations.some(s=>Number.isFinite(s.lat)&&s.lat>=25.8&&s.lat<=36.6&&s.lng>=-106.7&&s.lng<=-93.4)){
+  stateSet.add('TX');
+ }
+ let states=['TX',...[...stateSet].filter(s=>s!=='TX')].filter(s=>US_STATES.includes(s));
+ if(!states.length)states=['TX']; // TX is always a safe first AFDC pass for DFW wanted queues
+ const startIdx=US_STATES.indexOf(states[0]||'TX');
+ const bulk=await bulkFillFromAfdc(catalog,{
+  statesPerRun:Math.min(Math.max(states.length,3),8),
+  maxUpserts:Math.max(wantedStations.length*2,120),
+  startStateIndex:startIdx>=0?startIdx:US_STATES.indexOf('TX'),
+  getExisting:async id=>getStationPrice(id).catch(()=>null),
+  upsert:async(station,prices,updated,row)=>{
+   await upsertPrices(station,prices,updated,{name:row?.name,address:row?.address});
+  }
+ });
+ report.phases=report.phases||{};
+ report.phases.fillWantedFirst=bulk;
+ report.aggregatorFilled+=(bulk.filled||0);
+ report.priced+=(bulk.filled||0);
+ console.log('fillWantedFirst',JSON.stringify({filled:bulk.filled,states:bulk.states,scanned:bulk.scanned}));
+ return bulk;
+}
+
 async function runFullSweep(catalog){
  const pricedBefore=await countPricedStations().catch(()=>0);
  const report={
@@ -282,10 +352,23 @@ async function runFullSweep(catalog){
   phases:{}
  };
 
- console.log(`FULL SWEEP starting: catalog ${catalog.length}, pricedBefore ${pricedBefore}, brightData=${report.brightData}`);
+ const priorityIds=await loadPriorityIds(catalog);
+ report.priorityCount=priorityIds.length;
+ console.log(`FULL SWEEP starting: catalog ${catalog.length}, pricedBefore ${pricedBefore}, brightData=${report.brightData}, priority=${priorityIds.length}`);
+
+ // Phase 0 — AFDC for scout_wanted / DFW empties first (TX-biased) before full catalog walk.
+ const bulkEnabled=String(process.env.SCRAPER_BULK_AFDC||'1')!=='0';
+ if(bulkEnabled&&priorityIds.length){
+  try{
+   console.log('phase-0 fillWantedFirst begin');
+   await fillWantedFirst(catalog,priorityIds,report);
+  }catch(e){
+   report.phases.fillWantedFirstError=String(e.message||e).slice(0,240);
+   console.warn('phase-0 fillWantedFirst-fail',report.phases.fillWantedFirstError);
+  }
+ }
 
  // Phase 1 — nationwide AFDC match against the entire catalog (fast, free).
- const bulkEnabled=String(process.env.SCRAPER_BULK_AFDC||'1')!=='0';
  if(bulkEnabled){
   try{
    console.log('phase-1 afdc-nationwide begin');
@@ -312,10 +395,14 @@ async function runFullSweep(catalog){
  }
 
  const existingMap=await loadExistingMap(catalog.map(s=>s.id));
- const needFill=catalog.filter(s=>pricesNeedAggregatorFill(existingMap.get(s.id)||null));
- console.log(`phase-2 empties remaining: ${needFill.length} / ${catalog.length}`);
+ const needFill=prioritizeStations(
+  catalog.filter(s=>pricesNeedAggregatorFill(existingMap.get(s.id)||null)),
+  priorityIds
+ );
+ console.log(`phase-2 empties remaining: ${needFill.length} / ${catalog.length} (priority-first)`);
 
  // Phase 2 — optional Bright Data Tesla unlock for empties (skip datacenter 403 spam).
+ // Wanted / DFW empties are first in needFill so live Tesla TOU lands for user searches first.
  if(brightDataConfigured()&&needFill.length){
   const bdLimit=Math.min(needFill.length,Number(process.env.SCRAPER_BRIGHTDATA_MAX)||needFill.length);
   console.log(`phase-2a brightdata Tesla unlock for up to ${bdLimit} empties`);
@@ -344,8 +431,11 @@ async function runFullSweep(catalog){
   report.phases.brightdata={attempted:bdLimit,filled:bdFilled};
  }
 
- // Phase 3 — ChargeAlong / OCM drain for every still-empty station.
- const stillEmpty=catalog.filter(s=>pricesNeedAggregatorFill(existingMap.get(s.id)||null));
+ // Phase 3 — ChargeAlong / OCM drain for every still-empty station (wanted first).
+ const stillEmpty=prioritizeStations(
+  catalog.filter(s=>pricesNeedAggregatorFill(existingMap.get(s.id)||null)),
+  priorityIds
+ );
  console.log(`phase-3 aggregator drain: ${stillEmpty.length} stations`);
  try{
   const drain=await drainEmptyStationsWithAggregators(stillEmpty,{
@@ -399,11 +489,29 @@ async function runBatch(catalog){
  let offset=Number(state.offset)||0;
  if(offset<0||offset>=catalog.length)offset=0;
 
- const queue=[];
- for(let i=0;i<catalog.length&&queue.length<limit;i++){
-  queue.push(catalog[(offset+i)%catalog.length]);
+ const priorityIds=await loadPriorityIds(catalog);
+ const byId=new Map(catalog.map(s=>[String(s.id),s]));
+ const existingPriority=await getStationPrices(priorityIds.slice(0,200)).catch(()=>new Map());
+ const priorityQueue=[];
+ for(const id of priorityIds){
+  if(priorityQueue.length>=limit)break;
+  const s=byId.get(String(id));
+  if(!s)continue;
+  if(!pricesNeedAggregatorFill(existingPriority.get(s.id)||null))continue;
+  priorityQueue.push(s);
  }
- const nextOffset=catalog.length?(offset+queue.length)%catalog.length:0;
+
+ // Fill remaining batch slots from the rotating catalog cursor (skip already-queued).
+ const queued=new Set(priorityQueue.map(s=>s.id));
+ const queue=[...priorityQueue];
+ for(let i=0;i<catalog.length&&queue.length<limit;i++){
+  const s=catalog[(offset+i)%catalog.length];
+  if(queued.has(s.id))continue;
+  queued.add(s.id);
+  queue.push(s);
+ }
+ const catalogConsumed=Math.max(0,queue.length-priorityQueue.length);
+ const nextOffset=catalog.length?(offset+catalogConsumed)%catalog.length:0;
  const existingMap=await getStationPrices(queue.map(s=>s.id)).catch(()=>new Map());
  const afdcCache=new Map();
  const pricedBefore=await countPricedStations().catch(()=>0);
@@ -413,6 +521,7 @@ async function runBatch(catalog){
   mode:'github-actions-cloud-automatic',
   catalogSize:catalog.length,
   batchSize:queue.length,
+  priorityFirst:priorityQueue.length,
   offset,
   nextOffset,
   pricedBefore,
@@ -422,12 +531,31 @@ async function runBatch(catalog){
   aggregatorFilled:0,
   blocked:false,
   brightData:brightDataConfigured(),
-  errors:[]
+  errors:[],
+  phases:{}
  };
 
- console.log(`Scraper starting: batch ${queue.length} / catalog ${catalog.length} @ offset ${offset}`);
+ console.log(`Scraper starting: batch ${queue.length} (priority ${priorityQueue.length}) / catalog ${catalog.length} @ offset ${offset}`);
+
+ // AFDC TX/wanted states before Tesla attempts so known AFDC prices (e.g. Lamar) land immediately.
+ const bulkEnabled=String(process.env.SCRAPER_BULK_AFDC||'1')!=='0';
+ if(bulkEnabled&&priorityQueue.length){
+  try{await fillWantedFirst(catalog,priorityQueue.map(s=>s.id),report);}
+  catch(e){
+   report.phases.fillWantedFirstError=String(e.message||e).slice(0,240);
+   console.warn('fillWantedFirst-fail',report.phases.fillWantedFirstError);
+  }
+ }
 
  for(const station of queue){
+  // Skip Tesla unlock spam when fillWantedFirst already priced this id.
+  const fresh=await getStationPrice(station.id).catch(()=>existingMap.get(station.id)||null);
+  if(fresh&&!pricesNeedAggregatorFill(fresh)){
+   report.priced++;
+   console.log('skip-priced',station.id);
+   continue;
+  }
+
   let teslaPriced=false;
   try{
    const result=await scrapeOneTesla(station);
@@ -454,14 +582,19 @@ async function runBatch(catalog){
  }
 
  // Progressive nationwide AFDC bulk fill for empty stations (free DEMO_KEY / NREL_API_KEY).
- const bulkEnabled=String(process.env.SCRAPER_BULK_AFDC||'1')!=='0';
  if(bulkEnabled){
   try{
    const bulkState=(await getSyncState('afdc_bulk_cursor'))||{stateIndex:0};
+   // Prefer advancing from TX when cursor is cold and priority empties are Texan.
+   let startIdx=Number(bulkState.stateIndex)||0;
+   if(!bulkState.last&&priorityQueue.some(s=>/,\s*TX\b/i.test(String(s.address||'')))){
+    const tx=US_STATES.indexOf('TX');
+    if(tx>=0)startIdx=tx;
+   }
    const bulk=await bulkFillFromAfdc(catalog,{
     statesPerRun:Number(process.env.AFDC_STATES_PER_RUN)||3,
     maxUpserts:Number(process.env.AFDC_MAX_UPSERTS)||80,
-    startStateIndex:Number(bulkState.stateIndex)||0,
+    startStateIndex:startIdx,
     getExisting:async id=>getStationPrice(id).catch(()=>null),
     upsert:async(station,prices,updated,row)=>{
      await upsertPrices(station,prices,updated,{name:row?.name,address:row?.address});

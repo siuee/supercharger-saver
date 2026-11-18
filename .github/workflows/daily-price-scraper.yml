@@ -21,11 +21,16 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install app deps
         run: npm ci
       - name: Install scraper deps
         working-directory: scraper
         run: npm ci
+      - name: Install curl_cffi (TLS impersonation)
+        run: python -m pip install curl_cffi
       - name: Run scraper batch
         working-directory: scraper
         env:

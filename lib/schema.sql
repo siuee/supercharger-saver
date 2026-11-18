@@ -30,3 +30,14 @@ CREATE TABLE IF NOT EXISTS sync_state (
 INSERT INTO sync_state (key, value)
 VALUES ('scraper_cursor', '{"offset":0,"batchSize":60}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
+
+-- Stations users searched that still need prices — filled by residential browser scouts.
+CREATE TABLE IF NOT EXISTS scout_wanted (
+  station_id TEXT PRIMARY KEY,
+  hits INTEGER NOT NULL DEFAULT 1,
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS scout_wanted_priority_idx ON scout_wanted (hits DESC, updated_at DESC);

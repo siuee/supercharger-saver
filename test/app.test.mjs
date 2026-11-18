@@ -120,3 +120,17 @@ test('failed scrape recording never clears prices shape helpers',async()=>{
  assert.equal(body.freshness,'previous');
  assert.equal(body.prices.member.schedule[0].rate,.31);
 });
+test('scout CORS allows Tesla origins and validates payload shape',async()=>{
+ const {corsHeaders,acceptScoutItems}=await import('../lib/scout.js');
+ const headers=corsHeaders({headers:{origin:'https://www.tesla.com'}});
+ assert.equal(headers['Access-Control-Allow-Origin'],'https://www.tesla.com');
+ const env={...process.env};
+ process.env.DATABASE_URL=process.env.DATABASE_URL||'postgresql://user:pass@localhost/db';
+ try{
+  const bad=await acceptScoutItems([]);
+  assert.ok(bad.status===400||bad.status===503);
+ }finally{
+  if(env.DATABASE_URL===undefined)delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL=env.DATABASE_URL;
+ }
+});

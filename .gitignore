@@ -12,3 +12,8 @@ scraper-*.txt
 price*.json
 stations.json
 .env*
+allorigins.json
+jina-*.txt
+jina-*.json
+jina-*.html
+wayback-*.html

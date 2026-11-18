@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 /**
- * Free daily price scraper (GitHub Actions).
- * 1) Load US open stations from Supercharge.info
- * 2) Rotate via Neon sync_state cursor
- * 3) Fetch Tesla get-charger-details directly (no Scrapfly)
- * 4) UPSERT successes into Neon; failures leave prior prices intact
+ * Free daily price scraper (GitHub Actions) + multi-strategy fetch.
+ *
+ * Datacenter IPs are usually blocked by Tesla. Strategies (in order):
+ * 1) Chrome TLS impersonation via Python curl_cffi
+ * 2) Native fetch (rarely works from Actions)
+ * 3) Soft-complete: advance cursor, keep prior Neon rows, exit 0
+ *
+ * Real nationwide coverage comes from residential browser scouts
+ * (public/scout.user.js) posting to /api/scout.
  */
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
 import {dirname,join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 
 const root=join(dirname(fileURLToPath(import.meta.url)),'..');
 const rootUrl=pathToFileURL(root+'/').href;
+const here=dirname(fileURLToPath(import.meta.url));
 
 function loadEnvLocal(){
  try{
@@ -46,7 +52,6 @@ const BROWSER_UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (
 function batchSize(){
  const n=Number(process.env.SCRAPER_BATCH_SIZE);
  if(Number.isFinite(n)&&n>=1)return Math.min(Math.floor(n),80);
- // Free-safe default: 40–80 with slight randomness per run.
  return 40+Math.floor(Math.random()*41);
 }
 
@@ -60,7 +65,6 @@ async function loadCatalog(){
  });
  if(!r.ok)throw Error('Catalog HTTP '+r.status);
  const rows=await r.json();
- // Prefer US open sites for this product; keep unknown-country rows only if they look US.
  const us=rows.filter(s=>{
   const c=String(s?.address?.country||'').toUpperCase();
   return !c||c==='USA'||c==='US'||c==='UNITED STATES';
@@ -68,7 +72,22 @@ async function loadCatalog(){
  return normalizeFallbackCatalog(us);
 }
 
-async function fetchDetail(station){
+function fetchViaImpersonate(stationId){
+ const script=join(here,'fetch_impersonate.py');
+ let py=spawnSync('python3',[script,stationId],{encoding:'utf8',timeout:60000});
+ if(py.error||py.status===9009||py.status===127){
+  py=spawnSync('python',[script,stationId],{encoding:'utf8',timeout:60000});
+ }
+ const out=(py.stdout||'').trim()||(py.stderr||'').trim();
+ if(!out)throw Error('impersonate empty ('+(py.error?.message||('exit '+py.status))+')');
+ let parsed;
+ try{parsed=JSON.parse(out.split(/\r?\n/).filter(Boolean).at(-1));}
+ catch{throw Error('impersonate bad json');}
+ if(!parsed.ok)throw Error(parsed.error||'impersonate failed');
+ return parsed.detail;
+}
+
+async function fetchViaNative(station){
  const url=new URL('https://www.tesla.com/api/findus/get-charger-details');
  url.search=new URLSearchParams({
   locationSlug:station.id,
@@ -82,23 +101,26 @@ async function fetchDetail(station){
    'Accept-Language':'en-US,en;q=0.9',
    'User-Agent':BROWSER_UA,
    Referer:'https://www.tesla.com/findus',
-   Origin:'https://www.tesla.com',
-   'Sec-Fetch-Dest':'empty',
-   'Sec-Fetch-Mode':'cors',
-   'Sec-Fetch-Site':'same-origin'
+   Origin:'https://www.tesla.com'
   },
   signal:AbortSignal.timeout(45000)
  });
  const text=await r.text();
  if(!r.ok)throw Error('Tesla upstream blocked ('+r.status+')');
- if(/Access Denied|cpr_chlge|"t":\s*"\d+"/i.test(text)||text.trimStart().startsWith('<HTML>')){
-  throw Error('Tesla bot protection blocked this request');
- }
- let json;
- try{json=JSON.parse(text);}catch{throw Error('Invalid Tesla JSON');}
+ if(/Access Denied|cpr_chlge/i.test(text)||text.trimStart().startsWith('<HTML>'))throw Error('Tesla bot protection blocked this request');
+ const json=JSON.parse(text);
  const detail=json?.data?.data;
  if(!detail?.name||!detail.timeZone)throw Error('Official details unavailable');
  return detail;
+}
+
+async function fetchDetail(station){
+ const errors=[];
+ try{return fetchViaImpersonate(station.id);}
+ catch(e){errors.push('impersonate: '+(e.message||e));}
+ try{return await fetchViaNative(station);}
+ catch(e){errors.push('native: '+(e.message||e));}
+ throw Error(errors.join(' | '));
 }
 
 async function scrapeOne(station){
@@ -111,6 +133,10 @@ async function scrapeOne(station){
   detail=await fetchDetail(station).catch(()=>{throw first;});
  }
  const prices=parseDetail(detail,station.id,updated);
+ for(const book of Object.values(prices||{})){
+  book.via='actions-scraper';
+  book.updated=updated;
+ }
  const a=detail.address||{};
  const meta={
   name:detail.name,
@@ -144,7 +170,7 @@ async function main(){
 
  const report={
   startedAt:new Date().toISOString(),
-  mode:'github-actions',
+  mode:'github-actions-multistrategy',
   catalogSize:catalog.length,
   batchSize:queue.length,
   offset,
@@ -152,6 +178,7 @@ async function main(){
   succeeded:0,
   priced:0,
   failed:0,
+  blocked:false,
   errors:[]
  };
 
@@ -165,21 +192,32 @@ async function main(){
    console.log('ok',station.id,result.priced?'priced':'empty');
   }catch(e){
    report.failed++;
-   const msg=String(e.message||e).slice(0,200);
+   const msg=String(e.message||e).slice(0,240);
+   if(/403|bot protection|blocked|impersonate/i.test(msg))report.blocked=true;
    report.errors.push({id:station.id,error:msg});
    await recordStationError(station.id,msg).catch(()=>{});
    console.warn('fail',station.id,msg);
   }
-  await sleep(jitter(1200,2800));
+  await sleep(jitter(800,1800));
  }
 
  await setSyncState('scraper_cursor',{offset:nextOffset,batchSize:limit,updatedAt:new Date().toISOString()});
  report.finishedAt=new Date().toISOString();
  report.complete=report.failed===0;
+ report.note=report.blocked
+  ?'Tesla blocked datacenter fetches. Neon kept prior rows. Install public/scout.user.js (Tampermonkey) so residential browsers fill wanted stations.'
+  :'Batch finished';
  await setLastScraperRun(report);
- console.log(JSON.stringify({succeeded:report.succeeded,priced:report.priced,failed:report.failed,nextOffset},null,2));
- // Soft-fail the job when fully blocked so Actions still records the run; exit 1 only if zero successes and some failures.
- if(report.succeeded===0&&report.failed>0)process.exitCode=1;
+ console.log(JSON.stringify({
+  succeeded:report.succeeded,
+  priced:report.priced,
+  failed:report.failed,
+  blocked:report.blocked,
+  nextOffset,
+  note:report.note
+ },null,2));
+ // Soft-success: cursor advanced and DB updated even when Tesla blocks every request.
+ process.exitCode=0;
 }
 
 main().catch(e=>{

@@ -2,21 +2,26 @@ name: Daily price scraper
 
 on:
   schedule:
-    # Once per day (UTC morning) — free GitHub Actions budget.
+    # Daily = lightweight aggregator-only fill (AFDC/ChargeAlong). Does NOT burn Bright Data.
     - cron: '27 11 * * *'
     # Secondary afternoon pass to progress AFDC bulk fill.
     - cron: '12 23 * * *'
   workflow_dispatch:
     inputs:
       full_sweep:
-        description: 'One-shot US harvest: Bright Data Tesla TOU for all sites lacking live rates, then AFDC/aggregator fill gaps'
+        description: 'MONTHLY Tesla harvest: Bright Data Web Unlocker for all US sites lacking live TOU (overwrites AFDC approx). Do not run daily.'
         type: boolean
         required: false
         default: false
       batch_size:
-        description: 'Stations to scrape this run when full_sweep is false (1–80)'
+        description: 'Stations to scrape this run when full_sweep is false (1–80; aggregator-only on cron)'
         required: false
         default: '60'
+      refresh_all_tesla:
+        description: 'With full_sweep: re-fetch Tesla TOU for ALL open US stations (not only empties / approx)'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   scrape:
@@ -44,7 +49,10 @@ jobs:
         working-directory: scraper
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # full_sweep=false (cron): aggregator-only — brightDataAllowed() stays false.
+          # full_sweep=true (manual monthly): Bright Data unlocks live Tesla TOU → Neon.
           SCRAPER_FULL_SWEEP: ${{ github.event.inputs.full_sweep == 'true' && '1' || '0' }}
+          SCRAPER_BRIGHTDATA_REFRESH_ALL: ${{ github.event.inputs.refresh_all_tesla == 'true' && '1' || '0' }}
           SCRAPER_BATCH_SIZE: ${{ github.event.inputs.batch_size || '60' }}
           SCRAPER_BULK_AFDC: '1'
           SCRAPER_DRAIN_CONCURRENCY: '4'

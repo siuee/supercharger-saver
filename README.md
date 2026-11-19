@@ -60,9 +60,11 @@ There are **no per-user tables**. A request with `lat`/`lng` filters the shared 
 5. Matches aggregator rows to catalog stations by lat/lng (≤250 m) and UPSERTs synthetic all-day member/public books stamped with `via: afdc|chargealong|ocm` and `approximate: true`.
 6. Runs a progressive nationwide AFDC bulk fill each run (state cursor) so empty stations gain approximate rates over time.
 
-Aggregator rates are **flat / approximate**. Live Tesla time-of-use needs optional Bright Data (`BRIGHTDATA_API_TOKEN`).
+Aggregator rates are **flat / approximate**. Live Tesla time-of-use needs Bright Data Web Unlocker (`BRIGHTDATA_API_TOKEN`).
 
-Manual run: Actions → **Daily price scraper** → **Run workflow**, or locally:
+**Option A (recommended free-tier):** one **monthly** full US Tesla harvest via Actions `full_sweep=true` (Bright Data → Neon). Daily cron stays **aggregator-only** and does **not** call Bright Data, so the 5,000 free Web Unlocker credits last.
+
+Manual monthly Tesla harvest: Actions → **Daily price scraper** → **Run workflow** → enable **full_sweep** (optional **refresh_all_tesla** to re-fetch every station). Daily schedule runs automatically for AFDC/ChargeAlong fill only.
 
 ```sh
 npm run migrate
@@ -76,9 +78,11 @@ npm run scrape
 | `DATABASE_URL` | **Yes** (Vercel + Actions) | Neon connection — enough for approximate cloud prices |
 | `NREL_API_KEY` | Optional | AFDC key (defaults to free `DEMO_KEY`) |
 | `OCM_API_KEY` | Optional | Open Charge Map |
-| `BRIGHTDATA_API_TOKEN` | Optional | Web Unlocker for live Tesla TOU |
+| `BRIGHTDATA_API_TOKEN` | For live Tesla TOU | Web Unlocker API token (GitHub Actions secret) |
 | `BRIGHTDATA_ZONE` | Optional | Defaults to `web_unlocker1` |
-| `SCRAPER_BATCH_SIZE` | Optional | Tesla batch size (1–80) |
+| `SCRAPER_FULL_SWEEP` | Optional | `1` = monthly Tesla+AFDC full catalog (workflow `full_sweep`) |
+| `SCRAPER_BRIGHTDATA_REFRESH_ALL` | Optional | With full sweep: re-fetch ALL stations, not only missing Tesla TOU |
+| `SCRAPER_BATCH_SIZE` | Optional | Daily aggregator batch size (1–80) |
 | `CRON_SECRET` | Optional | Protects `/api/sync` and `/api/ingest` (≥24 chars) |
 
 ## Deploy on Vercel

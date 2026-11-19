@@ -1,19 +1,18 @@
 #!/usr/bin/env node
 /**
- * Free daily price scraper (GitHub Actions) + multi-strategy fetch.
+ * Cloud price scraper (GitHub Actions) + multi-strategy fetch.
  *
- * Strategies (in order):
- * 1) Chrome TLS impersonation via Python curl_cffi
- * 2) Native fetch (rarely works from Actions)
- * 3) Optional Bright Data Web Unlocker (if BRIGHTDATA_API_TOKEN set)
- * 4) Free aggregator fill (AFDC / ChargeAlong / optional OCM) for failed/empty rows
+ * Daily cron (default): lightweight aggregator-only fill — AFDC / ChargeAlong / OCM.
+ * Does NOT call Bright Data (preserves free Web Unlocker credits).
  *
- * Full sweep (SCRAPER_FULL_SWEEP=1):
+ * Monthly full Tesla harvest (workflow_dispatch full_sweep=true):
  *  - Nationwide AFDC match against the entire US catalog first
- *  - Then drain every remaining empty station via ChargeAlong/OCM
- *  - Tesla live details only when Bright Data is configured (Actions IPs get 403)
+ *  - Bright Data Web Unlocker for ALL open US stations lacking live Tesla TOU
+ *    (overwrites AFDC/approx with real Tesla schedules when unlock succeeds)
+ *  - Optional SCRAPER_BRIGHTDATA_REFRESH_ALL=1 to re-fetch every station
+ *  - Soft-fail continue on Bright Data errors; exit 0 so Actions stays green
  *
- * Soft-completes with exit 0 so Actions stays green while Neon fills progressively.
+ * Bright Data is only used when SCRAPER_FULL_SWEEP=1 (or SCRAPER_USE_BRIGHTDATA=1).
  */
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
@@ -86,6 +85,20 @@ function batchSize(){
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function jitter(minMs,maxMs){return minMs+Math.floor(Math.random()*(maxMs-minMs+1));}
 function brightDataConfigured(){return!!(process.env.BRIGHTDATA_API_TOKEN||'').trim();}
+
+/** Bright Data only on monthly full_sweep (or explicit SCRAPER_USE_BRIGHTDATA=1) — never burn credits on daily cron. */
+function brightDataAllowed(){
+ if(!brightDataConfigured())return false;
+ const force=String(process.env.SCRAPER_USE_BRIGHTDATA||'').trim().toLowerCase();
+ if(force==='1'||force==='true'||force==='yes')return true;
+ if(force==='0'||force==='false'||force==='no')return false;
+ return fullSweepEnabled();
+}
+
+function refreshAllTesla(){
+ const v=String(process.env.SCRAPER_BRIGHTDATA_REFRESH_ALL||'').trim().toLowerCase();
+ return v==='1'||v==='true'||v==='yes';
+}
 
 /** True when station lacks a live Tesla TOU book (AFDC/approx counts as still needing Tesla). */
 function needsTeslaLive(row){
@@ -195,9 +208,11 @@ async function fetchDetail(station,{preferBrightDataOnly=false}={}){
   try{return{detail:await fetchViaNative(station),via:'actions-scraper'};}
   catch(e){errors.push('native: '+(e.message||e));}
  }
- if(brightDataConfigured()){
+ if(brightDataAllowed()){
   try{return{detail:await fetchViaBrightData(station),via:'brightdata'};}
   catch(e){errors.push('brightdata: '+(e.message||e));}
+ }else if(preferBrightDataOnly&&brightDataConfigured()){
+  errors.push('brightdata: blocked on daily cron (set full_sweep or SCRAPER_USE_BRIGHTDATA=1)');
  }
  throw Error(errors.join(' | ')||'Tesla fetch unavailable');
 }
@@ -407,12 +422,13 @@ async function runFullSweep(catalog){
  }
 
  const existingMap=await loadExistingMap(catalog.map(s=>s.id));
- // One-time cloud Tesla harvest: every station lacking live Tesla TOU (AFDC approx still counts as needing Tesla).
+ // Monthly cloud Tesla harvest: stations lacking live Tesla TOU (AFDC approx still needs upgrade),
+ // or every open US station when SCRAPER_BRIGHTDATA_REFRESH_ALL=1.
  const needTesla=prioritizeStations(
-  catalog.filter(s=>needsTeslaLive(existingMap.get(s.id)||null)),
+  catalog.filter(s=>refreshAllTesla()||needsTeslaLive(existingMap.get(s.id)||null)),
   priorityIds
  );
- console.log(`phase-2 Tesla targets (no live TOU): ${needTesla.length} / ${catalog.length} (priority-first)`);
+ console.log(`phase-2 Tesla targets (${refreshAllTesla()?'refresh-all':'no live TOU'}): ${needTesla.length} / ${catalog.length} (priority-first)`);
 
  // Phase 2 — Bright Data Web Unlocker for ALL stations missing Tesla live rates (cloud-only path).
  if(brightDataConfigured()&&needTesla.length){
@@ -573,8 +589,13 @@ async function runBatch(catalog){
   }
  }
 
+ // Daily cron: aggregator-only. Bright Data / Tesla unlock is reserved for monthly full_sweep
+ // (or SCRAPER_USE_BRIGHTDATA=1) so free Web Unlocker credits are not burned every day.
+ const allowTesla=brightDataAllowed();
+ report.phases.dailyTesla=allowTesla?'enabled':'skipped-preserve-brightdata-credits';
+
  for(const station of queue){
-  // Skip Tesla unlock spam when fillWantedFirst already priced this id.
+  // Skip when fillWantedFirst / prior rows already priced this id.
   const fresh=await getStationPrice(station.id).catch(()=>existingMap.get(station.id)||null);
   if(fresh&&!pricesNeedAggregatorFill(fresh)){
    report.priced++;
@@ -583,28 +604,30 @@ async function runBatch(catalog){
   }
 
   let teslaPriced=false;
-  try{
-   const result=await scrapeOneTesla(station);
-   report.succeeded++;
-   if(result.priced){
-    report.priced++;
-    teslaPriced=true;
+  if(allowTesla){
+   try{
+    const result=await scrapeOneTesla(station);
+    report.succeeded++;
+    if(result.priced){
+     report.priced++;
+     teslaPriced=true;
+    }
+    console.log('ok',station.id,result.priced?'priced':'empty');
+   }catch(e){
+    report.failed++;
+    const msg=String(e.message||e).slice(0,240);
+    if(/403|bot protection|blocked|impersonate/i.test(msg))report.blocked=true;
+    report.errors.push({id:station.id,error:msg});
+    await recordStationError(station.id,msg).catch(()=>{});
+    console.warn('fail',station.id,msg);
    }
-   console.log('ok',station.id,result.priced?'priced':'empty');
-  }catch(e){
-   report.failed++;
-   const msg=String(e.message||e).slice(0,240);
-   if(/403|bot protection|blocked|impersonate/i.test(msg))report.blocked=true;
-   report.errors.push({id:station.id,error:msg});
-   await recordStationError(station.id,msg).catch(()=>{});
-   console.warn('fail',station.id,msg);
   }
 
-  // Fill from aggregators when Tesla failed or returned an empty schedule.
+  // Fill from aggregators when Tesla skipped/failed or returned an empty schedule.
   if(!teslaPriced){
    await tryAggregatorFill(station,existingMap.get(station.id)||null,afdcCache,report);
   }
-  await sleep(jitter(400,1200));
+  await sleep(jitter(200,600));
  }
 
  // Progressive nationwide AFDC bulk fill for empty stations (free DEMO_KEY / NREL_API_KEY).

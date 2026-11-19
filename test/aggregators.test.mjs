@@ -239,4 +239,16 @@ test('full sweep Bright Data path targets stations lacking Tesla live TOU',()=>{
  assert.match(scraper,/preferBrightDataOnly:\s*true/);
  assert.match(scraper,/BRIGHTDATA_API_TOKEN unset/);
  assert.match(scraper,/teslaLiveAfter|teslaFillRate/);
+ assert.match(scraper,/brightDataEmptiesOnly|empties-only/);
+ assert.match(scraper,/brightDataMax|SCRAPER_BRIGHTDATA_MAX/);
+ assert.match(scraper,/brightdata_cursor/);
+});
+
+test('workflow wires Bright Data chunk inputs for full_sweep',()=>{
+ const yml=readFileSync(new URL('../.github/workflows/daily-price-scraper.yml',import.meta.url),'utf8');
+ assert.match(yml,/brightdata_max/);
+ assert.match(yml,/brightdata_empties_only/);
+ assert.match(yml,/SCRAPER_BRIGHTDATA_MAX/);
+ assert.match(yml,/SCRAPER_BRIGHTDATA_EMPTIES_ONLY/);
+ assert.match(yml,/refresh_all_tesla/);
 });

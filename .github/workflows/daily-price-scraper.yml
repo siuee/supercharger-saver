@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       full_sweep:
-        description: 'MONTHLY Tesla harvest: Bright Data Web Unlocker for all US sites lacking live TOU (overwrites AFDC approx). Do not run daily.'
+        description: 'MONTHLY Tesla harvest: Bright Data for empty/missing US stations (chunked). Do not run daily.'
         type: boolean
         required: false
         default: false
@@ -17,8 +17,17 @@ on:
         description: 'Stations to scrape this run when full_sweep is false (1–80; aggregator-only on cron)'
         required: false
         default: '60'
+      brightdata_max:
+        description: 'With full_sweep: max Bright Data stations this run (default 180; keep under 6h Actions limit)'
+        required: false
+        default: '180'
+      brightdata_empties_only:
+        description: 'With full_sweep: only empty/missing rows (skip AFDC approx + skip already-teslaLive). Keep true to save credits.'
+        type: boolean
+        required: false
+        default: true
       refresh_all_tesla:
-        description: 'With full_sweep: re-fetch Tesla TOU for ALL open US stations (not only empties / approx)'
+        description: 'With full_sweep: re-fetch Tesla TOU for ALL open US stations (burns credits; overrides empties_only)'
         type: boolean
         required: false
         default: false
@@ -53,8 +62,12 @@ jobs:
           # full_sweep=true (manual monthly): Bright Data unlocks live Tesla TOU → Neon.
           SCRAPER_FULL_SWEEP: ${{ github.event.inputs.full_sweep == 'true' && '1' || '0' }}
           SCRAPER_BRIGHTDATA_REFRESH_ALL: ${{ github.event.inputs.refresh_all_tesla == 'true' && '1' || '0' }}
+          # Default empties-only when input omitted (cron) or true; only disable when explicitly false.
+          SCRAPER_BRIGHTDATA_EMPTIES_ONLY: ${{ github.event.inputs.brightdata_empties_only == 'false' && '0' || '1' }}
+          SCRAPER_BRIGHTDATA_MAX: ${{ github.event.inputs.brightdata_max || '180' }}
           SCRAPER_BATCH_SIZE: ${{ github.event.inputs.batch_size || '60' }}
           SCRAPER_BULK_AFDC: '1'
+          SCRAPER_DRAIN_MAX: '120'
           SCRAPER_DRAIN_CONCURRENCY: '4'
           SCRAPER_DRAIN_DELAY_MS: '300'
           # Optional — empty secrets are fine (DEMO_KEY / skip Bright Data / skip OCM).

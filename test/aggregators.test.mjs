@@ -242,6 +242,10 @@ test('full sweep Bright Data path targets stations lacking Tesla live TOU',()=>{
  assert.match(scraper,/brightDataEmptiesOnly|empties-only/);
  assert.match(scraper,/brightDataMax|SCRAPER_BRIGHTDATA_MAX/);
  assert.match(scraper,/brightdata_cursor/);
+ // Option A: empties-only must include catalog stations with no Neon row (not only priority).
+ assert.match(scraper,/NO Neon row|no Neon row|missing from DB|catalog ids with NO Neon row/i);
+ assert.doesNotMatch(scraper,/Skip catalog-gap spray/);
+ assert.doesNotMatch(scraper,/if\(!row\)return prioritySet\.has/);
 });
 
 test('workflow wires Bright Data chunk inputs for full_sweep',()=>{

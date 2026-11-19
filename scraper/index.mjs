@@ -8,7 +8,7 @@
  * Monthly full Tesla harvest (workflow_dispatch full_sweep=true):
  *  - Nationwide AFDC match against the entire US catalog first
  *  - Bright Data Web Unlocker for stations lacking live Tesla TOU
- *    (default: empties-only + chunked via SCRAPER_BRIGHTDATA_MAX to fit <6h)
+ *    (default: empties-only = no Neon row OR empty prices; chunked via SCRAPER_BRIGHTDATA_MAX <6h)
  *  - Never re-fetches stations that already have Tesla live / Bright Data rates
  *    unless SCRAPER_BRIGHTDATA_REFRESH_ALL=1
  *  - Soft-fail continue on Bright Data errors; exit 0 so Actions stays green
@@ -101,7 +101,7 @@ function refreshAllTesla(){
  return v==='1'||v==='true'||v==='yes';
 }
 
-/** Default true: Bright Data only hits empty/missing rows (skip AFDC approx upgrades). */
+/** Default true: Bright Data only hits no-row + empty-price stations (skip AFDC approx upgrades). */
 function brightDataEmptiesOnly(){
  if(refreshAllTesla())return false;
  const v=String(process.env.SCRAPER_BRIGHTDATA_EMPTIES_ONLY||'1').trim().toLowerCase();
@@ -452,15 +452,15 @@ async function runFullSweep(catalog){
  const existingMap=await loadExistingMap(catalog.map(s=>s.id));
  // Monthly cloud Tesla harvest: never re-burn credits on stations that already have Tesla live
  // unless SCRAPER_BRIGHTDATA_REFRESH_ALL=1. Default empties-only skips AFDC-approx upgrades.
- const prioritySet=new Set((priorityIds||[]).map(String));
  const needTeslaAll=prioritizeStations(
   catalog.filter(s=>{
    const row=existingMap.get(s.id)||null;
    if(refreshAllTesla())return true;
    if(!needsTeslaLive(row))return false; // already has Tesla live / Bright Data — never re-burn
    if(!emptiesOnly)return true; // upgrade AFDC approx + empties
-   // Empties-only: Neon `{}` rows, plus priority stations missing a row. Skip catalog-gap spray.
-   if(!row)return prioritySet.has(String(s.id));
+   // Empties-only: catalog ids with NO Neon row, plus Neon `{}` empty prices.
+   // Do NOT require priority/scout_wanted — Option A needs every open US station harvested.
+   if(!row)return true;
    return isPriceEmpty(row);
   }),
   priorityIds

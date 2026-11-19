@@ -22,7 +22,7 @@ on:
         required: false
         default: '180'
       brightdata_empties_only:
-        description: 'With full_sweep: only empty/missing rows (skip AFDC approx + skip already-teslaLive). Keep true to save credits.'
+        description: 'With full_sweep: catalog ids missing from Neon + empty-price rows (skip AFDC approx + skip already-teslaLive). Keep true to save credits.'
         type: boolean
         required: false
         default: true

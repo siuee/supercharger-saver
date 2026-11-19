@@ -32,6 +32,12 @@ on:
         required: false
         default: false
 
+# Never auto-cancel an in-progress harvest when another dispatch/cron arrives.
+# Overlapping runs queue; agents must NOT `gh run cancel` a live full_sweep.
+concurrency:
+  group: daily-price-scraper
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest

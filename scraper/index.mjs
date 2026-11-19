@@ -466,10 +466,17 @@ async function runFullSweep(catalog){
   priorityIds
  );
  const bdCursor=(await getSyncState('brightdata_cursor').catch(()=>null))||{};
+ // Permanent skip = Tesla returned no schedule. Transient fails use attempts map (retry up to 3).
  const skipIds=new Set(Array.isArray(bdCursor.skipIds)?bdCursor.skipIds.map(String):[]);
- const needTesla=needTeslaAll.filter(s=>!skipIds.has(String(s.id)));
+ const attempts=bdCursor.attempts&&typeof bdCursor.attempts==='object'?{...bdCursor.attempts}:{};
+ const needTesla=needTeslaAll.filter(s=>{
+  const id=String(s.id);
+  if(skipIds.has(id))return false;
+  if(Number(attempts[id])>=3)return false;
+  return true;
+ });
  const modeLabel=refreshAllTesla()?'refresh-all':(emptiesOnly?'empties-only':'no live TOU');
- console.log(`phase-2 Tesla targets (${modeLabel}): ${needTesla.length} remaining / ${needTeslaAll.length} eligible / ${catalog.length} catalog (skip=${skipIds.size}, priority-first)`);
+ console.log(`phase-2 Tesla targets (${modeLabel}): ${needTesla.length} remaining / ${needTeslaAll.length} eligible / ${catalog.length} catalog (skip=${skipIds.size}, hardFail=${Object.values(attempts).filter(n=>Number(n)>=3).length}, priority-first)`);
 
  // Phase 2 — Bright Data Web Unlocker, chunked so each Actions run stays under the 6h limit.
  if(brightDataConfigured()&&needTesla.length){
@@ -479,12 +486,14 @@ async function runFullSweep(catalog){
   const newlySkipped=[];
   for(let i=0;i<bdLimit;i++){
    const station=needTesla[i];
+   const sid=String(station.id);
    try{
     const result=await scrapeOneTesla(station,{preferBrightDataOnly:true});
     report.succeeded++;
     if(result.priced){
      report.priced++;
      bdFilled++;
+     delete attempts[sid];
      existingMap.set(station.id,{
       prices:{member:{via:'brightdata'}},
       fetchedAt:new Date().toISOString(),
@@ -493,8 +502,8 @@ async function runFullSweep(catalog){
      });
     }else{
      bdEmpty++;
-     newlySkipped.push(String(station.id));
-     skipIds.add(String(station.id));
+     newlySkipped.push(sid);
+     skipIds.add(sid); // no Tesla schedule — don't keep burning credits
     }
     console.log('bd-ok',station.id,result.priced?'priced':'empty',`${i+1}/${bdLimit}`);
    }catch(e){
@@ -504,9 +513,9 @@ async function runFullSweep(catalog){
     if(/403|bot protection|blocked/i.test(msg))report.blocked=true;
     if(report.errors.length<80)report.errors.push({id:station.id,error:msg});
     await recordStationError(station.id,msg).catch(()=>{});
-    newlySkipped.push(String(station.id));
-    skipIds.add(String(station.id));
-    console.warn('bd-fail',station.id,msg);
+    attempts[sid]=(Number(attempts[sid])||0)+1;
+    // Transient bad-json/timeout: retry next chunk (up to 3). Do not permanent-skip.
+    console.warn('bd-fail',station.id,`attempt=${attempts[sid]}`,msg);
    }
    await sleep(jitter(400,1200));
   }
@@ -519,7 +528,8 @@ async function runFullSweep(catalog){
    emptyDetail:bdEmpty,
    failed:bdFailed,
    remaining,
-   skipIds:[...skipIds].slice(-8000)
+   skipIds:[...skipIds].slice(-8000),
+   attempts
   }).catch(()=>{});
   report.phases.brightdata={
    mode:modeLabel,
